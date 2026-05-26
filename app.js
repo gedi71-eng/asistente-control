@@ -27,6 +27,7 @@ const ALARM_OPTIONS = [
 let state = loadState();
 let audioContext = null;
 let deferredInstallPrompt = null;
+let pendingVoiceAction = null;
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -110,6 +111,11 @@ function inputDateValue(date = new Date()) {
   return local.toISOString().slice(0, 10);
 }
 
+function inputDateTimeValue(date = new Date()) {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
 function isSameDay(a, b) {
   return a.getFullYear() === b.getFullYear() &&
     a.getMonth() === b.getMonth() &&
@@ -127,6 +133,10 @@ function startOfDay(date) {
 
 function endOfDay(date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+}
+
+function addMinutes(date, amount) {
+  return new Date(date.getTime() + amount * 60 * 1000);
 }
 
 function addDays(date, amount) {
@@ -299,7 +309,7 @@ function createItem(type, formData) {
       followUp: formData.get("followUp"),
       notes: cleanText(formData.get("notes"))
     });
-    toast("Atención guardada");
+    toast("Seguimiento guardado");
   }
 
   if (type === "event") {
@@ -342,6 +352,42 @@ function createItem(type, formData) {
   render();
 }
 
+function addTask({ title, due = "", priority = "media", notes = "" }) {
+  state.tasks.unshift({
+    id: uid(),
+    createdAt: new Date().toISOString(),
+    title: cleanText(title),
+    due,
+    priority,
+    notes: cleanText(notes),
+    done: false
+  });
+}
+
+function addFollowUp({ person, subject, followUp = "", notes = "" }) {
+  state.attentions.unshift({
+    id: uid(),
+    createdAt: new Date().toISOString(),
+    person: cleanText(person || "Seguimiento"),
+    subject: cleanText(subject),
+    status: "abierta",
+    followUp,
+    notes: cleanText(notes)
+  });
+}
+
+function addEvent({ title, start, end = "", place = "", notes = "" }) {
+  state.events.unshift({
+    id: uid(),
+    createdAt: new Date().toISOString(),
+    title: cleanText(title),
+    start,
+    end,
+    place: cleanText(place),
+    notes: cleanText(notes)
+  });
+}
+
 function updateItem(collection, id, patch) {
   state[collection] = state[collection].map((item) => item.id === id ? { ...item, ...patch } : item);
   saveState();
@@ -374,7 +420,7 @@ function reminderItems() {
       id: `attention-${attention.id}`,
       rawId: attention.id,
       collection: "attentions",
-      kind: "Atención",
+      kind: "Seguimiento",
       title: `${attention.person}: ${attention.subject}`,
       detail: attention.status,
       at: parseDate(attention.followUp),
@@ -459,7 +505,7 @@ function checkAlarms() {
 
 function speakPending() {
   const openTasks = state.tasks.filter((task) => !task.done);
-  const openAttentions = state.attentions.filter((attention) => attention.status !== "cerrada");
+  const openAttentions = openFollowUps();
   const nextItems = reminderItems().filter((item) => item.at >= new Date()).slice(0, 4);
   const monthItems = financialItems().filter((item) => {
     const date = parseDate(item.date);
@@ -474,7 +520,7 @@ function speakPending() {
   }
 
   const parts = [
-    `Tienes ${openTasks.length} pendientes abiertos y ${openAttentions.length} atenciones activas.`
+    `Tienes ${openTasks.length} pendientes abiertos y ${openAttentions.length} seguimientos activos.`
   ];
 
   if (nextItems.length) {
@@ -512,9 +558,131 @@ function speakSchedule() {
   speak(`Agenda de ${range.label}. Tienes ${items.length} registros. ${preview}.${extra}`);
 }
 
+function openFollowUps() {
+  return state.attentions.filter((attention) => attention.status !== "cerrada");
+}
+
+function tasksDueToday() {
+  const now = new Date();
+  return state.tasks.filter((task) => {
+    const due = parseDate(task.due);
+    return !task.done && due && isSameDay(due, now);
+  });
+}
+
+function overdueTasks() {
+  const now = new Date();
+  return state.tasks.filter((task) => {
+    const due = parseDate(task.due);
+    return !task.done && due && due < now && !isSameDay(due, now);
+  });
+}
+
+function eventsToday() {
+  const now = new Date();
+  return state.events
+    .map((event) => ({ ...event, startDate: parseDate(event.start), endDate: parseDate(event.end) }))
+    .filter((event) => event.startDate && isSameDay(event.startDate, now))
+    .sort((a, b) => a.startDate - b.startDate);
+}
+
+function freeSlotsToday() {
+  const now = new Date();
+  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 8, 0);
+  const dayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 17, 0);
+  let cursor = now > dayStart ? addMinutes(now, 15 - (now.getMinutes() % 15 || 15)) : dayStart;
+
+  if (cursor >= dayEnd) return [];
+
+  const busy = eventsToday()
+    .map((event) => ({
+      start: event.startDate,
+      end: event.endDate && event.endDate > event.startDate ? event.endDate : addMinutes(event.startDate, 60)
+    }))
+    .filter((slot) => slot.end > cursor && slot.start < dayEnd)
+    .sort((a, b) => a.start - b.start);
+
+  const slots = [];
+  busy.forEach((slot) => {
+    const start = slot.start < cursor ? cursor : slot.start;
+    if (start - cursor >= 30 * 60 * 1000) {
+      slots.push({ start: cursor, end: start });
+    }
+    if (slot.end > cursor) cursor = slot.end;
+  });
+
+  if (dayEnd - cursor >= 30 * 60 * 1000) slots.push({ start: cursor, end: dayEnd });
+  return slots;
+}
+
+function buildDayPlan() {
+  const agenda = agendaItemsForRange("today");
+  const todayTasks = tasksDueToday();
+  const lateTasks = overdueTasks();
+  const followUps = openFollowUps();
+  const withoutDate = followUps.filter((attention) => !attention.followUp);
+  const slots = freeSlotsToday();
+  const recommendations = [];
+
+  if (lateTasks.length) {
+    recommendations.push(`Resolver primero ${lateTasks.length} pendiente${lateTasks.length === 1 ? "" : "s"} vencido${lateTasks.length === 1 ? "" : "s"}.`);
+  }
+  if (todayTasks.length) {
+    recommendations.push(`Separar tiempo para ${todayTasks.length} pendiente${todayTasks.length === 1 ? "" : "s"} de hoy.`);
+  }
+  if (withoutDate.length) {
+    recommendations.push(`Programar próxima fecha para ${withoutDate.length} seguimiento${withoutDate.length === 1 ? "" : "s"} abierto${withoutDate.length === 1 ? "" : "s"} sin revisión.`);
+  }
+  if (slots.length && (lateTasks.length || todayTasks.length || withoutDate.length)) {
+    const first = slots[0];
+    recommendations.push(`Usar el espacio de ${formatTime.format(first.start)} a ${formatTime.format(first.end)} para avanzar lo más urgente.`);
+  }
+  if (!recommendations.length) {
+    recommendations.push("La agenda está manejable. Mantén el día para cerrar pendientes pequeños y actualizar seguimientos.");
+  }
+
+  return {
+    agenda,
+    todayTasks,
+    lateTasks,
+    followUps,
+    withoutDate,
+    slots,
+    recommendations
+  };
+}
+
+function renderDayPlan(speakResult = false) {
+  const plan = buildDayPlan();
+  const slotText = plan.slots.length
+    ? plan.slots.slice(0, 3).map((slot) => `${formatTime.format(slot.start)} - ${formatTime.format(slot.end)}`).join(", ")
+    : "Sin espacios libres claros en horario laboral";
+
+  $("#dayPlan").innerHTML = `
+    <div class="plan-grid">
+      <article><strong>${plan.agenda.length}</strong><span>citas, vencimientos o revisiones hoy</span></article>
+      <article><strong>${plan.lateTasks.length}</strong><span>pendientes vencidos</span></article>
+      <article><strong>${plan.withoutDate.length}</strong><span>seguimientos sin próxima fecha</span></article>
+    </div>
+    <div class="plan-block">
+      <span>Disponibilidad</span>
+      <p>${escapeHtml(slotText)}</p>
+    </div>
+    <div class="plan-block">
+      <span>Recomendación</span>
+      <ul>${plan.recommendations.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+    </div>
+  `;
+
+  if (speakResult) {
+    speak(`Mi día. Tienes ${plan.agenda.length} registros en agenda, ${plan.lateTasks.length} pendientes vencidos y ${plan.withoutDate.length} seguimientos sin próxima fecha. ${plan.recommendations.join(" ")}`);
+  }
+}
+
 function render() {
   renderMetrics();
   renderDashboard();
+  renderDayPlan();
   renderTasks();
   renderAttentions();
   renderSchedule();
@@ -536,7 +704,7 @@ function renderMetrics() {
   const now = new Date();
   const openTasks = state.tasks.filter((task) => !task.done);
   const dueToday = reminderItems().filter((item) => isSameDay(item.at, now));
-  const openAttentions = state.attentions.filter((attention) => attention.status !== "cerrada");
+  const openAttentions = openFollowUps();
   const monthItems = financialItems().filter((item) => {
     const date = parseDate(item.date);
     return date && isThisMonth(date);
@@ -630,7 +798,7 @@ function renderAttentions() {
         <button type="button" data-action="delete-attention" data-id="${attention.id}">Borrar</button>
       </div>
     </article>
-  `).join("") || emptyState("Sin atenciones registradas");
+  `).join("") || emptyState("Sin seguimientos registrados");
 }
 
 function renderSchedule() {
@@ -821,6 +989,245 @@ function setDefaultDates() {
   $("#financeForm [name='date']").value = today;
 }
 
+function normalizeText(value) {
+  return cleanText(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function compactVoiceSubject(text, keywords) {
+  let result = text;
+  keywords.forEach((keyword) => {
+    result = result.replace(keyword, "");
+  });
+  return cleanText(result.replace(/\b(hoy|manana|pasado manana|a las|para las|recordarme|crear|agendar|programar|agregar)\b/gi, " "));
+}
+
+function parseVoiceDate(text) {
+  const normalized = normalizeText(text);
+  const now = new Date();
+  let date = startOfDay(now);
+
+  if (normalized.includes("pasado manana")) date = startOfDay(addDays(now, 2));
+  else if (normalized.includes("manana")) date = startOfDay(addDays(now, 1));
+
+  const time = parseVoiceTime(normalized);
+  if (time) {
+    date.setHours(time.hour, time.minute, 0, 0);
+  } else {
+    date.setHours(9, 0, 0, 0);
+  }
+
+  return date;
+}
+
+function parseVoiceTime(text) {
+  const wordNumbers = {
+    una: 1,
+    uno: 1,
+    dos: 2,
+    tres: 3,
+    cuatro: 4,
+    cinco: 5,
+    seis: 6,
+    siete: 7,
+    ocho: 8,
+    nueve: 9,
+    diez: 10,
+    once: 11,
+    doce: 12
+  };
+  const numeric = text.match(/\b([01]?\d|2[0-3])(?::([0-5]\d))?\s*(a\.?\s*m\.?|p\.?\s*m\.?|am|pm)?\b/);
+  const word = Object.keys(wordNumbers).find((key) => new RegExp(`\\b${key}\\b`).test(text));
+
+  let hour = numeric ? Number(numeric[1]) : wordNumbers[word];
+  let minute = numeric && numeric[2] ? Number(numeric[2]) : 0;
+  const meridian = numeric?.[3] || "";
+
+  if (!hour) return null;
+  if ((meridian.includes("p") || text.includes("tarde") || text.includes("noche")) && hour < 12) hour += 12;
+  if ((meridian.includes("a") || text.includes("manana")) && hour === 12) hour = 0;
+
+  return { hour, minute };
+}
+
+function parseVoiceCommand(transcript) {
+  const normalized = normalizeText(transcript);
+  const date = parseVoiceDate(transcript);
+  const due = inputDateTimeValue(date);
+
+  if (normalized.includes("planear mi dia")) {
+    return { intent: "plan", transcript };
+  }
+
+  if (normalized.includes("cerrar seguimiento")) {
+    const query = compactVoiceSubject(transcript, [/cerrar seguimiento/gi]);
+    const match = openFollowUps().find((item) => normalizeText(`${item.person} ${item.subject}`).includes(normalizeText(query)));
+    return {
+      intent: "close-followup",
+      transcript,
+      label: "Cerrar seguimiento",
+      items: match ? [{ type: "closeFollowUp", id: match.id, title: `${match.person}: ${match.subject}` }] : []
+    };
+  }
+
+  if (normalized.includes("seguimiento")) {
+    const subject = compactVoiceSubject(transcript, [/crear seguimiento/gi, /seguimiento/gi, /caso/gi]);
+    const items = [{
+      type: "followup",
+      title: "Seguimiento",
+      data: {
+        person: subject.split(",")[0] || "Seguimiento",
+        subject,
+        followUp: normalized.includes("manana") || normalized.includes("hoy") || normalized.includes("pasado manana") ? due : "",
+        notes: transcript
+      }
+    }];
+
+    if (normalized.includes("llamar") || normalized.includes("recordar")) {
+      items.push({
+        type: "task",
+        title: subject,
+        data: {
+          title: subject,
+          due,
+          priority: "media",
+          notes: `Relacionado con seguimiento: ${subject}`
+        }
+      });
+    }
+
+    return { intent: "create", transcript, label: "Crear seguimiento", items };
+  }
+
+  if (normalized.includes("cita") || normalized.includes("reunion") || normalized.includes("evento") || normalized.includes("agendar") || normalized.includes("programar")) {
+    const title = compactVoiceSubject(transcript, [/agendar cita/gi, /programar reunion/gi, /agregar evento/gi, /programar/gi, /agendar/gi, /cita/gi, /reunion/gi, /evento/gi]);
+    return {
+      intent: "create",
+      transcript,
+      label: "Crear cita o evento",
+      items: [{
+        type: "event",
+        title,
+        data: {
+          title: title || transcript,
+          start: due,
+          end: inputDateTimeValue(addMinutes(date, 60)),
+          place: "",
+          notes: transcript
+        }
+      }]
+    };
+  }
+
+  if (normalized.includes("pendiente") || normalized.includes("recordarme")) {
+    const title = compactVoiceSubject(transcript, [/crear pendiente/gi, /pendiente/gi, /recordarme/gi]);
+    return {
+      intent: "create",
+      transcript,
+      label: "Crear pendiente",
+      items: [{
+        type: "task",
+        title,
+        data: {
+          title: title || transcript,
+          due,
+          priority: "media",
+          notes: transcript
+        }
+      }]
+    };
+  }
+
+  return {
+    intent: "create",
+    transcript,
+    label: "Crear pendiente",
+    items: [{
+      type: "task",
+      title: transcript,
+      data: { title: transcript, due: "", priority: "media", notes: "Creado por voz" }
+    }]
+  };
+}
+
+function showVoiceConfirmation(action) {
+  if (action.intent === "plan") {
+    renderDayPlan(true);
+    toast("Planeando tu día");
+    return;
+  }
+
+  pendingVoiceAction = action;
+  $("#voiceTranscript").textContent = `Escuché: "${action.transcript}"`;
+
+  if (!action.items?.length) {
+    $("#voicePreview").innerHTML = emptyState("No encontré un seguimiento abierto que coincida.");
+    $("#confirmVoice").hidden = true;
+  } else {
+    $("#confirmVoice").hidden = false;
+    $("#voicePreview").innerHTML = `
+      <span>${escapeHtml(action.label)}</span>
+      ${action.items.map((item) => `
+        <article class="voice-item">
+          <strong>${escapeHtml(item.title || item.data?.title || item.data?.subject || "Acción")}</strong>
+          <small>${escapeHtml(voiceItemSummary(item))}</small>
+        </article>
+      `).join("")}
+    `;
+  }
+
+  $("#voicePanel").hidden = false;
+}
+
+function voiceItemSummary(item) {
+  if (item.type === "task") return `Pendiente · ${item.data.due ? formatDateTime.format(parseDate(item.data.due)) : "sin fecha"}`;
+  if (item.type === "event") return `Agenda · ${formatDateTime.format(parseDate(item.data.start))}`;
+  if (item.type === "followup") return `Seguimiento · ${item.data.followUp ? formatDateTime.format(parseDate(item.data.followUp)) : "sin próxima fecha"}`;
+  if (item.type === "closeFollowUp") return "Cerrar seguimiento abierto";
+  return "Acción";
+}
+
+function confirmVoiceAction() {
+  if (!pendingVoiceAction?.items?.length) return;
+
+  pendingVoiceAction.items.forEach((item) => {
+    if (item.type === "task") addTask(item.data);
+    if (item.type === "event") addEvent(item.data);
+    if (item.type === "followup") addFollowUp(item.data);
+    if (item.type === "closeFollowUp") updateItem("attentions", item.id, { status: "cerrada" });
+  });
+
+  pendingVoiceAction = null;
+  $("#voicePanel").hidden = true;
+  saveState();
+  render();
+  toast("Guardado desde voz");
+}
+
+function startVoiceCommand() {
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Recognition) {
+    toast("Tu navegador no reconoce voz aquí");
+    speak("Tu navegador no reconoce voz aquí.");
+    return;
+  }
+
+  const recognition = new Recognition();
+  recognition.lang = "es-CO";
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+
+  recognition.onstart = () => toast("Escuchando...");
+  recognition.onerror = () => toast("No pude escuchar bien");
+  recognition.onresult = (event) => {
+    const transcript = event.results[0][0].transcript;
+    showVoiceConfirmation(parseVoiceCommand(transcript));
+  };
+  recognition.start();
+}
+
 function bindEvents() {
   $$("form[data-form]").forEach((form) => {
     form.addEventListener("submit", (event) => {
@@ -854,8 +1261,15 @@ function bindEvents() {
     checkAlarms();
   });
 
-  $("#speakNow").addEventListener("click", speakPending);
+  $("#voiceCommand").addEventListener("click", startVoiceCommand);
+  $("#planDay").addEventListener("click", () => renderDayPlan(true));
+  $("#speakNow").addEventListener("click", () => renderDayPlan(true));
   $("#speakSchedule").addEventListener("click", speakSchedule);
+  $("#confirmVoice").addEventListener("click", confirmVoiceAction);
+  $("#cancelVoice").addEventListener("click", () => {
+    pendingVoiceAction = null;
+    $("#voicePanel").hidden = true;
+  });
   $("#exportData").addEventListener("click", exportData);
   $("#importData").addEventListener("change", (event) => importData(event.target.files[0]));
 

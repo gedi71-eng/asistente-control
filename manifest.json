@@ -1,7 +1,7 @@
 {
   "name": "Asistente de Control",
   "short_name": "Asistente",
-  "description": "Control de atenciones, pendientes, cronograma y finanzas.",
+  "description": "Control de mi día, agenda, pendientes, seguimientos y finanzas.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

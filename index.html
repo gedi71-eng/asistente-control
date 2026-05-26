@@ -5,11 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Asistente de Control</title>
     <meta name="theme-color" content="#087f7b">
-    <meta name="description" content="Asistente para atenciones, pendientes, cronograma y finanzas.">
+    <meta name="description" content="Asistente para agenda, pendientes, seguimientos, finanzas y planeación del día.">
     <link rel="manifest" href="manifest.json">
     <link rel="icon" href="icon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="icon.svg">
-    <link rel="stylesheet" href="styles.css?v=5">
+    <link rel="stylesheet" href="styles.css?v=6">
   </head>
   <body>
     <div class="app-shell">
@@ -20,8 +20,9 @@
         </div>
         <div class="top-actions">
           <button id="installApp" class="install-btn" type="button" hidden>Instalar app</button>
-          <button id="enableAlarms" class="primary-btn" type="button">Activar alarmas</button>
-          <button id="speakNow" class="icon-btn wide" type="button">Hablar pendientes</button>
+          <button id="voiceCommand" class="primary-btn" type="button">Programar por voz</button>
+          <button id="enableAlarms" class="icon-btn" type="button">Activar alarmas</button>
+          <button id="speakNow" class="icon-btn wide" type="button">Leer mi día</button>
           <button id="exportData" class="icon-btn" type="button" aria-label="Exportar datos">Exportar</button>
           <label class="icon-btn file-btn" aria-label="Importar datos">
             Importar
@@ -31,15 +32,15 @@
       </header>
 
       <nav class="tabs" aria-label="Secciones">
-        <button class="tab active" type="button" data-view="dashboard">Tablero</button>
-        <button class="tab" type="button" data-view="attentions">Atenciones</button>
+        <button class="tab active" type="button" data-view="today">Mi día</button>
+        <button class="tab" type="button" data-view="schedule">Agenda</button>
         <button class="tab" type="button" data-view="tasks">Pendientes</button>
-        <button class="tab" type="button" data-view="schedule">Cronograma</button>
+        <button class="tab" type="button" data-view="followups">Seguimientos</button>
         <button class="tab" type="button" data-view="finance">Finanzas</button>
       </nav>
 
       <main>
-        <section id="dashboard" class="view active">
+        <section id="today" class="view active">
           <div class="summary-grid" aria-label="Resumen">
             <article class="metric">
               <span>Pendientes</span>
@@ -50,7 +51,7 @@
               <strong id="metricToday">0</strong>
             </article>
             <article class="metric green">
-              <span>Atenciones abiertas</span>
+              <span>Seguimientos abiertos</span>
               <strong id="metricAttentions">0</strong>
             </article>
             <article class="metric amber">
@@ -85,17 +86,25 @@
               <div id="timeline" class="timeline"></div>
             </section>
           </div>
+
+          <section class="panel day-planner">
+            <div class="panel-head">
+              <h2>Planear mi día</h2>
+              <button id="planDay" class="primary-btn" type="button">Planear mi día</button>
+            </div>
+            <div id="dayPlan" class="day-plan"></div>
+          </section>
         </section>
 
-        <section id="attentions" class="view">
+        <section id="followups" class="view">
           <div class="split-layout">
             <form id="attentionForm" class="panel form-panel" data-form="attention">
-              <h2>Nueva atención</h2>
-              <label>Persona o cliente
+              <h2>Nuevo seguimiento</h2>
+              <label>Persona, caso o asunto
                 <input name="person" type="text" required placeholder="Nombre">
               </label>
-              <label>Motivo
-                <input name="subject" type="text" required placeholder="Consulta, visita, llamada">
+              <label>Asunto
+                <input name="subject" type="text" required placeholder="Transporte escolar, documento, solicitud">
               </label>
               <div class="form-row">
                 <label>Estado
@@ -105,19 +114,19 @@
                     <option value="cerrada">Cerrada</option>
                   </select>
                 </label>
-                <label>Próximo contacto
+                <label>Próxima revisión
                   <input name="followUp" type="datetime-local">
                 </label>
               </div>
               <label>Notas
                 <textarea name="notes" rows="4" placeholder="Acuerdos, datos importantes, compromisos"></textarea>
               </label>
-              <button class="primary-btn" type="submit">Guardar atención</button>
+              <button class="primary-btn" type="submit">Guardar seguimiento</button>
             </form>
 
             <section class="panel">
               <div class="panel-head">
-                <h2>Atenciones</h2>
+                <h2>Seguimientos</h2>
                 <input id="attentionSearch" class="search" type="search" placeholder="Buscar">
               </div>
               <div id="attentionList" class="item-list"></div>
@@ -167,7 +176,7 @@
         <section id="schedule" class="view">
           <div class="split-layout">
             <form id="eventForm" class="panel form-panel" data-form="event">
-              <h2>Nuevo evento</h2>
+              <h2>Nueva cita o evento</h2>
               <label>Actividad
                 <input name="title" type="text" required placeholder="Cita, reunión, entrega">
               </label>
@@ -190,7 +199,7 @@
 
             <section class="panel">
               <div class="panel-head">
-                <h2>Programación</h2>
+                <h2>Agenda</h2>
                 <div class="panel-tools">
                   <select id="scheduleRange" aria-label="Periodo de agenda">
                     <option value="today">Hoy</option>
@@ -289,8 +298,22 @@
       </main>
     </div>
 
+    <div id="voicePanel" class="voice-panel" hidden>
+      <section class="voice-card" role="dialog" aria-modal="true" aria-labelledby="voiceTitle">
+        <div class="panel-head">
+          <h2 id="voiceTitle">Confirmar voz</h2>
+          <button id="cancelVoice" class="icon-btn" type="button">Cancelar</button>
+        </div>
+        <p id="voiceTranscript" class="voice-transcript"></p>
+        <div id="voicePreview" class="voice-preview"></div>
+        <div class="voice-actions">
+          <button id="confirmVoice" class="primary-btn" type="button">Guardar</button>
+        </div>
+      </section>
+    </div>
+
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-    <script src="app.js?v=5"></script>
+    <script src="app.js?v=6"></script>
   </body>
 </html>

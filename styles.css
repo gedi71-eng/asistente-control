@@ -271,6 +271,51 @@ h2 {
   align-items: start;
 }
 
+.day-planner {
+  margin-top: 16px;
+}
+
+.day-plan {
+  display: grid;
+  gap: 12px;
+}
+
+.plan-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.plan-grid article,
+.plan-block {
+  border: 1px solid #ece8dd;
+  border-radius: 8px;
+  background: #fbfaf7;
+  padding: 14px;
+}
+
+.plan-grid strong {
+  display: block;
+  color: var(--teal-dark);
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.plan-grid span,
+.plan-block span {
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.plan-block p,
+.plan-block ul {
+  margin: 8px 0 0;
+}
+
+.plan-block ul {
+  padding-left: 18px;
+}
+
 .split-layout {
   grid-template-columns: minmax(290px, 380px) minmax(0, 1fr);
 }
@@ -614,6 +659,67 @@ textarea {
   transform: translateY(0);
 }
 
+.voice-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: rgba(35, 35, 35, 0.42);
+  padding: 18px;
+}
+
+.voice-panel[hidden] {
+  display: none;
+}
+
+.voice-card {
+  width: min(560px, 100%);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.22);
+  padding: 18px;
+}
+
+.voice-transcript {
+  margin: 0 0 12px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.voice-preview {
+  display: grid;
+  gap: 10px;
+}
+
+.voice-preview > span {
+  color: var(--teal-dark);
+  font-weight: 900;
+}
+
+.voice-item {
+  border: 1px solid #ece8dd;
+  border-radius: 8px;
+  background: #fbfaf7;
+  padding: 12px;
+}
+
+.voice-item strong,
+.voice-item small {
+  display: block;
+}
+
+.voice-item small {
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.voice-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
 @media (max-width: 880px) {
   .app-shell {
     width: min(100% - 20px, 680px);
@@ -637,6 +743,10 @@ textarea {
 
   .summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .plan-grid {
+    grid-template-columns: 1fr;
   }
 
   .finance-summary {
