@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Asistente de Control</title>
+    <meta name="theme-color" content="#087f7b">
+    <meta name="description" content="Asistente para atenciones, pendientes, cronograma y finanzas.">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="icon.svg">
+    <link rel="stylesheet" href="styles.css?v=5">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Asistente operativo</p>
+          <h1>Control diario</h1>
+        </div>
+        <div class="top-actions">
+          <button id="installApp" class="install-btn" type="button" hidden>Instalar app</button>
+          <button id="enableAlarms" class="primary-btn" type="button">Activar alarmas</button>
+          <button id="speakNow" class="icon-btn wide" type="button">Hablar pendientes</button>
+          <button id="exportData" class="icon-btn" type="button" aria-label="Exportar datos">Exportar</button>
+          <label class="icon-btn file-btn" aria-label="Importar datos">
+            Importar
+            <input id="importData" type="file" accept="application/json">
+          </label>
+        </div>
+      </header>
+
+      <nav class="tabs" aria-label="Secciones">
+        <button class="tab active" type="button" data-view="dashboard">Tablero</button>
+        <button class="tab" type="button" data-view="attentions">Atenciones</button>
+        <button class="tab" type="button" data-view="tasks">Pendientes</button>
+        <button class="tab" type="button" data-view="schedule">Cronograma</button>
+        <button class="tab" type="button" data-view="finance">Finanzas</button>
+      </nav>
+
+      <main>
+        <section id="dashboard" class="view active">
+          <div class="summary-grid" aria-label="Resumen">
+            <article class="metric">
+              <span>Pendientes</span>
+              <strong id="metricTasks">0</strong>
+            </article>
+            <article class="metric coral">
+              <span>Vencen hoy</span>
+              <strong id="metricToday">0</strong>
+            </article>
+            <article class="metric green">
+              <span>Atenciones abiertas</span>
+              <strong id="metricAttentions">0</strong>
+            </article>
+            <article class="metric amber">
+              <span>Balance del mes</span>
+              <strong id="metricFinance">$0</strong>
+            </article>
+          </div>
+
+          <div class="board">
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Ahora</h2>
+                <span id="clock" class="soft-pill">--:--</span>
+              </div>
+              <div id="nextReminder" class="next-reminder"></div>
+              <div id="dueList" class="item-list compact"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Agenda próxima</h2>
+                <span id="alarmProfile" class="soft-pill">Alarmas</span>
+              </div>
+              <div id="alarmOptions" class="alarm-options" aria-label="Anticipación de alarmas">
+                <label><input type="checkbox" name="leadTimes" value="4320"> 3 días</label>
+                <label><input type="checkbox" name="leadTimes" value="2880"> 2 días</label>
+                <label><input type="checkbox" name="leadTimes" value="1440"> 1 día</label>
+                <label><input type="checkbox" name="leadTimes" value="60"> 1 hora</label>
+                <label><input type="checkbox" name="leadTimes" value="30"> 30 min</label>
+                <label><input type="checkbox" name="leadTimes" value="0"> A la hora</label>
+              </div>
+              <div id="timeline" class="timeline"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="attentions" class="view">
+          <div class="split-layout">
+            <form id="attentionForm" class="panel form-panel" data-form="attention">
+              <h2>Nueva atención</h2>
+              <label>Persona o cliente
+                <input name="person" type="text" required placeholder="Nombre">
+              </label>
+              <label>Motivo
+                <input name="subject" type="text" required placeholder="Consulta, visita, llamada">
+              </label>
+              <div class="form-row">
+                <label>Estado
+                  <select name="status">
+                    <option value="abierta">Abierta</option>
+                    <option value="seguimiento">Seguimiento</option>
+                    <option value="cerrada">Cerrada</option>
+                  </select>
+                </label>
+                <label>Próximo contacto
+                  <input name="followUp" type="datetime-local">
+                </label>
+              </div>
+              <label>Notas
+                <textarea name="notes" rows="4" placeholder="Acuerdos, datos importantes, compromisos"></textarea>
+              </label>
+              <button class="primary-btn" type="submit">Guardar atención</button>
+            </form>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Atenciones</h2>
+                <input id="attentionSearch" class="search" type="search" placeholder="Buscar">
+              </div>
+              <div id="attentionList" class="item-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="tasks" class="view">
+          <div class="split-layout">
+            <form id="taskForm" class="panel form-panel" data-form="task">
+              <h2>Nuevo pendiente</h2>
+              <label>Tarea
+                <input name="title" type="text" required placeholder="Qué hay que hacer">
+              </label>
+              <div class="form-row">
+                <label>Vence
+                  <input name="due" type="datetime-local">
+                </label>
+                <label>Prioridad
+                  <select name="priority">
+                    <option value="alta">Alta</option>
+                    <option value="media" selected>Media</option>
+                    <option value="baja">Baja</option>
+                  </select>
+                </label>
+              </div>
+              <label>Notas
+                <textarea name="notes" rows="4" placeholder="Detalles, pasos, enlaces o contexto"></textarea>
+              </label>
+              <button class="primary-btn" type="submit">Guardar pendiente</button>
+            </form>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Pendientes</h2>
+                <select id="taskFilter" aria-label="Filtrar pendientes">
+                  <option value="open">Abiertos</option>
+                  <option value="today">Hoy</option>
+                  <option value="all">Todos</option>
+                </select>
+              </div>
+              <div id="taskList" class="item-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="schedule" class="view">
+          <div class="split-layout">
+            <form id="eventForm" class="panel form-panel" data-form="event">
+              <h2>Nuevo evento</h2>
+              <label>Actividad
+                <input name="title" type="text" required placeholder="Cita, reunión, entrega">
+              </label>
+              <div class="form-row">
+                <label>Inicio
+                  <input name="start" type="datetime-local" required>
+                </label>
+                <label>Fin
+                  <input name="end" type="datetime-local">
+                </label>
+              </div>
+              <label>Lugar
+                <input name="place" type="text" placeholder="Oficina, llamada, dirección">
+              </label>
+              <label>Notas
+                <textarea name="notes" rows="4" placeholder="Objetivo, asistentes, materiales"></textarea>
+              </label>
+              <button class="primary-btn" type="submit">Guardar evento</button>
+            </form>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Programación</h2>
+                <div class="panel-tools">
+                  <select id="scheduleRange" aria-label="Periodo de agenda">
+                    <option value="today">Hoy</option>
+                    <option value="week">Semana</option>
+                    <option value="month">Mes</option>
+                    <option value="year">Año</option>
+                    <option value="future">Próximos</option>
+                  </select>
+                  <button id="speakSchedule" class="icon-btn" type="button">Leer agenda</button>
+                </div>
+              </div>
+              <div id="scheduleSummary" class="agenda-summary"></div>
+              <div id="scheduleList" class="timeline"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="finance" class="view">
+          <div class="finance-summary" aria-label="Resumen financiero">
+            <article class="finance-card income">
+              <span>Ingresos del periodo</span>
+              <strong id="financeIncome">$0</strong>
+            </article>
+            <article class="finance-card expense">
+              <span>Gastos del periodo</span>
+              <strong id="financeExpense">$0</strong>
+            </article>
+            <article class="finance-card balance">
+              <span>Balance</span>
+              <strong id="financeBalance">$0</strong>
+            </article>
+          </div>
+
+          <div class="split-layout">
+            <form id="financeForm" class="panel form-panel" data-form="finance">
+              <h2>Nuevo movimiento</h2>
+              <label>Tipo
+                <select name="type">
+                  <option value="income">Ingreso</option>
+                  <option value="expense">Gasto</option>
+                </select>
+              </label>
+              <label>Concepto
+                <input name="description" type="text" required placeholder="Venta, pago, transporte, compra">
+              </label>
+              <div class="form-row">
+                <label>Valor
+                  <input name="amount" type="number" min="0" step="100" required placeholder="0">
+                </label>
+                <label>Categoría
+                  <select name="category">
+                    <option>Ventas</option>
+                    <option>Servicios cobrados</option>
+                    <option>Pago recibido</option>
+                    <option>Operativo</option>
+                    <option>Transporte</option>
+                    <option>Alimentación</option>
+                    <option>Servicios</option>
+                    <option>Otros</option>
+                  </select>
+                </label>
+              </div>
+              <label>Fecha
+                <input name="date" type="date" required>
+              </label>
+              <label>Notas
+                <textarea name="notes" rows="3" placeholder="Cliente, comprobante, forma de pago o detalle"></textarea>
+              </label>
+              <button class="primary-btn" type="submit">Guardar movimiento</button>
+            </form>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Movimientos</h2>
+                <div class="panel-tools finance-controls">
+                  <select id="financePeriod" aria-label="Periodo financiero">
+                    <option value="day">Día</option>
+                    <option value="15days">15 días</option>
+                    <option value="month" selected>Mes</option>
+                    <option value="quarter">3 meses</option>
+                    <option value="year">Año</option>
+                    <option value="all">Todos</option>
+                  </select>
+                  <select id="financeYear" aria-label="Año financiero"></select>
+                  <select id="financeType" aria-label="Tipo de movimiento">
+                    <option value="all">Todo</option>
+                    <option value="income">Ingresos</option>
+                    <option value="expense">Gastos</option>
+                  </select>
+                </div>
+              </div>
+              <div id="financeList" class="item-list"></div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <script src="app.js?v=5"></script>
+  </body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "name": "Asistente de Control",
+  "short_name": "Asistente",
+  "description": "Control de atenciones, pendientes, cronograma y finanzas.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6f4ef",
+  "theme_color": "#087f7b",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

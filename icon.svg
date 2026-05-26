@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Asistente de Control">
+  <rect width="512" height="512" rx="112" fill="#087f7b"/>
+  <path d="M142 153c0-22 18-40 40-40h148c22 0 40 18 40 40v206c0 22-18 40-40 40H182c-22 0-40-18-40-40V153Z" fill="#fff"/>
+  <path d="M198 190h116M198 244h116M198 298h72" fill="none" stroke="#087f7b" stroke-width="28" stroke-linecap="round"/>
+  <circle cx="344" cy="332" r="64" fill="#c7523b"/>
+  <path d="M316 333l21 21 39-48" fill="none" stroke="#fff" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
