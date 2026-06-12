@@ -9,7 +9,7 @@
     <link rel="manifest" href="manifest.json">
     <link rel="icon" href="icon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="icon.svg">
-    <link rel="stylesheet" href="styles.css?v=6">
+    <link rel="stylesheet" href="styles.css?v=7">
   </head>
   <body>
     <div class="app-shell">
@@ -21,7 +21,6 @@
         <div class="top-actions">
           <button id="installApp" class="install-btn" type="button" hidden>Instalar app</button>
           <button id="voiceCommand" class="primary-btn" type="button">Programar por voz</button>
-          <button id="enableAlarms" class="icon-btn" type="button">Activar alarmas</button>
           <button id="speakNow" class="icon-btn wide" type="button">Leer mi día</button>
           <button id="exportData" class="icon-btn" type="button" aria-label="Exportar datos">Exportar</button>
           <label class="icon-btn file-btn" aria-label="Importar datos">
@@ -37,6 +36,7 @@
         <button class="tab" type="button" data-view="tasks">Pendientes</button>
         <button class="tab" type="button" data-view="followups">Seguimientos</button>
         <button class="tab" type="button" data-view="finance">Finanzas</button>
+        <button class="tab" type="button" data-view="alarms">Alarmas</button>
       </nav>
 
       <main>
@@ -73,15 +73,6 @@
             <section class="panel">
               <div class="panel-head">
                 <h2>Agenda próxima</h2>
-                <span id="alarmProfile" class="soft-pill">Alarmas</span>
-              </div>
-              <div id="alarmOptions" class="alarm-options" aria-label="Anticipación de alarmas">
-                <label><input type="checkbox" name="leadTimes" value="4320"> 3 días</label>
-                <label><input type="checkbox" name="leadTimes" value="2880"> 2 días</label>
-                <label><input type="checkbox" name="leadTimes" value="1440"> 1 día</label>
-                <label><input type="checkbox" name="leadTimes" value="60"> 1 hora</label>
-                <label><input type="checkbox" name="leadTimes" value="30"> 30 min</label>
-                <label><input type="checkbox" name="leadTimes" value="0"> A la hora</label>
               </div>
               <div id="timeline" class="timeline"></div>
             </section>
@@ -231,6 +222,10 @@
               <span>Balance</span>
               <strong id="financeBalance">$0</strong>
             </article>
+            <article class="finance-card debt">
+              <span>Deudas pendientes</span>
+              <strong id="financeDebt">$0</strong>
+            </article>
           </div>
 
           <div class="split-layout">
@@ -240,6 +235,7 @@
                 <select name="type">
                   <option value="income">Ingreso</option>
                   <option value="expense">Gasto</option>
+                  <option value="debt">Deuda por pagar</option>
                 </select>
               </label>
               <label>Concepto
@@ -258,12 +254,34 @@
                     <option>Transporte</option>
                     <option>Alimentación</option>
                     <option>Servicios</option>
+                    <option>Gasto fijo</option>
+                    <option>Deuda</option>
+                    <option>Crédito</option>
                     <option>Otros</option>
                   </select>
                 </label>
               </div>
               <label>Fecha
                 <input name="date" type="date" required>
+              </label>
+              <div class="form-row">
+                <label>Frecuencia
+                  <select name="frequency">
+                    <option value="once">Una vez</option>
+                    <option value="monthly">Mensual fijo</option>
+                    <option value="semiannual">Semestral</option>
+                    <option value="annual">Anual</option>
+                  </select>
+                </label>
+                <label>Estado
+                  <select name="status">
+                    <option value="paid">Pagado o recibido</option>
+                    <option value="pending">Pendiente</option>
+                  </select>
+                </label>
+              </div>
+              <label>Vence o se debe pagar
+                <input name="due" type="date">
               </label>
               <label>Notas
                 <textarea name="notes" rows="3" placeholder="Cliente, comprobante, forma de pago o detalle"></textarea>
@@ -288,10 +306,38 @@
                     <option value="all">Todo</option>
                     <option value="income">Ingresos</option>
                     <option value="expense">Gastos</option>
+                    <option value="debt">Deudas</option>
                   </select>
                 </div>
               </div>
               <div id="financeList" class="item-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="alarms" class="view">
+          <div class="split-layout alarm-layout">
+            <section class="panel alarm-panel">
+              <div class="panel-head">
+                <h2>Alarmas</h2>
+                <span id="alarmProfile" class="soft-pill">Alarmas</span>
+              </div>
+              <button id="enableAlarms" class="primary-btn" type="button">Activar alarmas</button>
+              <div id="alarmOptions" class="alarm-options" aria-label="Anticipación de alarmas">
+                <label><input type="checkbox" name="leadTimes" value="4320"> 3 días</label>
+                <label><input type="checkbox" name="leadTimes" value="2880"> 2 días</label>
+                <label><input type="checkbox" name="leadTimes" value="1440"> 1 día</label>
+                <label><input type="checkbox" name="leadTimes" value="60"> 1 hora</label>
+                <label><input type="checkbox" name="leadTimes" value="30"> 30 min</label>
+                <label><input type="checkbox" name="leadTimes" value="0"> A la hora</label>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Próximos avisos</h2>
+              </div>
+              <div id="alarmPreview" class="timeline"></div>
             </section>
           </div>
         </section>
@@ -314,6 +360,6 @@
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-    <script src="app.js?v=6"></script>
+    <script src="app.js?v=7"></script>
   </body>
 </html>

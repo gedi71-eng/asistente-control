@@ -1,9 +1,9 @@
-const CACHE_NAME = "asistente-control-v5";
+const CACHE_NAME = "asistente-control-v6";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=6",
-  "./app.js?v=6",
+  "./styles.css?v=7",
+  "./app.js?v=7",
   "./manifest.json",
   "./icon.svg"
 ];

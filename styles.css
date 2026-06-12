@@ -158,7 +158,7 @@ h2 {
 
 .tabs {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
   margin: 0 0 18px;
 }
@@ -191,7 +191,7 @@ h2 {
 
 .finance-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -217,6 +217,10 @@ h2 {
 
 .finance-card.balance {
   background: var(--violet);
+}
+
+.finance-card.debt {
+  background: #805a20;
 }
 
 .finance-card span {
@@ -282,7 +286,7 @@ h2 {
 
 .plan-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -401,7 +405,12 @@ h2 {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  margin: 0 0 14px;
+  margin: 14px 0 0;
+}
+
+.alarm-panel {
+  display: grid;
+  gap: 14px;
 }
 
 .alarm-options label {
@@ -513,12 +522,20 @@ h2 {
   color: var(--green);
 }
 
+.money.debt {
+  color: #805a20;
+}
+
 .finance-item.income {
   border-left: 5px solid var(--green);
 }
 
 .finance-item.expense {
   border-left: 5px solid var(--coral);
+}
+
+.finance-item.debt {
+  border-left: 5px solid #805a20;
 }
 
 .mini-row {

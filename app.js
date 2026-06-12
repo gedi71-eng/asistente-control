@@ -24,6 +24,24 @@ const ALARM_OPTIONS = [
   { value: 0, label: "a la hora" }
 ];
 
+const FINANCE_FREQUENCIES = {
+  once: { label: "Una vez", months: 0 },
+  monthly: { label: "Mensual fijo", months: 1 },
+  semiannual: { label: "Semestral", months: 6 },
+  annual: { label: "Anual", months: 12 }
+};
+
+const FINANCE_TYPE_LABELS = {
+  income: "Ingreso",
+  expense: "Gasto",
+  debt: "Deuda"
+};
+
+const FINANCE_STATUS_LABELS = {
+  paid: "Pagado",
+  pending: "Pendiente"
+};
+
 let state = loadState();
 let audioContext = null;
 let deferredInstallPrompt = null;
@@ -73,9 +91,13 @@ function mergeState(base, incoming) {
     merged.transactions = merged.expenses.map((expense) => ({
       ...expense,
       type: "expense",
+      frequency: "once",
+      status: "paid",
       notes: expense.notes || ""
     }));
   }
+
+  merged.transactions = (merged.transactions || []).map(normalizeFinanceItem);
 
   if (!Array.isArray(merged.settings.leadTimes)) {
     const legacyLead = Number(merged.settings.leadMinutes);
@@ -104,6 +126,15 @@ function parseDate(value) {
   }
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function parseReminderDate(value, fallbackHour = 9) {
+  const date = parseDate(value);
+  if (!date) return null;
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    date.setHours(fallbackHour, 0, 0, 0);
+  }
+  return date;
 }
 
 function inputDateValue(date = new Date()) {
@@ -143,6 +174,27 @@ function addDays(date, amount) {
   const copy = new Date(date);
   copy.setDate(copy.getDate() + amount);
   return copy;
+}
+
+function addMonths(date, amount) {
+  const copy = new Date(date);
+  const day = copy.getDate();
+  copy.setDate(1);
+  copy.setMonth(copy.getMonth() + amount);
+  copy.setDate(Math.min(day, new Date(copy.getFullYear(), copy.getMonth() + 1, 0).getDate()));
+  return copy;
+}
+
+function eventEndDate(event) {
+  const start = parseDate(event.start);
+  const end = parseDate(event.end);
+  if (end && start && end > start) return end;
+  return start ? addMinutes(start, 60) : null;
+}
+
+function isEventFinished(event, now = new Date()) {
+  const end = eventEndDate(event);
+  return end ? end <= now : false;
 }
 
 function startOfWeek(date) {
@@ -282,6 +334,31 @@ function notify(title, body) {
   toast(`${title}: ${body}`);
 }
 
+function normalizeFinanceType(type) {
+  return ["income", "expense", "debt"].includes(type) ? type : "expense";
+}
+
+function normalizeFinanceFrequency(frequency) {
+  return Object.prototype.hasOwnProperty.call(FINANCE_FREQUENCIES, frequency) ? frequency : "once";
+}
+
+function normalizeFinanceStatus(status, type = "expense") {
+  if (["paid", "pending"].includes(status)) return status;
+  return type === "debt" ? "pending" : "paid";
+}
+
+function normalizeFinanceItem(item) {
+  const type = normalizeFinanceType(item.type);
+  return {
+    ...item,
+    type,
+    due: item.due || "",
+    frequency: normalizeFinanceFrequency(item.frequency),
+    status: normalizeFinanceStatus(item.status, type),
+    notes: item.notes || ""
+  };
+}
+
 function createItem(type, formData) {
   const base = {
     id: uid(),
@@ -336,13 +413,17 @@ function createItem(type, formData) {
   }
 
   if (type === "finance") {
+    const itemType = normalizeFinanceType(formData.get("type"));
     state.transactions.unshift({
       ...base,
-      type: formData.get("type") === "income" ? "income" : "expense",
+      type: itemType,
       description: cleanText(formData.get("description")),
       amount: Number(formData.get("amount") || 0),
       category: formData.get("category"),
       date: formData.get("date"),
+      due: formData.get("due"),
+      frequency: normalizeFinanceFrequency(formData.get("frequency")),
+      status: normalizeFinanceStatus(formData.get("status"), itemType),
       notes: cleanText(formData.get("notes"))
     });
     toast("Movimiento guardado");
@@ -428,7 +509,7 @@ function reminderItems() {
     }));
 
   const events = state.events
-    .filter((event) => event.start)
+    .filter((event) => event.start && !isEventFinished(event))
     .map((event) => ({
       id: `event-${event.id}`,
       rawId: event.id,
@@ -440,7 +521,21 @@ function reminderItems() {
       notes: event.notes
     }));
 
-  return [...tasks, ...attentions, ...events]
+  const finances = financeReminderItems().map((item) => {
+    const at = parseReminderDate(financeOccurrenceDate(item));
+    return {
+      id: `finance-${item.id}-${inputDateValue(at)}`,
+      rawId: item.id,
+      collection: "transactions",
+      kind: item.type === "debt" ? "Deuda" : "Finanzas",
+      title: item.description,
+      detail: `${financeTypeLabel(item)} · ${financeFrequencyLabel(item.frequency)}`,
+      at,
+      notes: item.notes
+    };
+  });
+
+  return [...tasks, ...attentions, ...events, ...finances]
     .filter((item) => item.at)
     .sort((a, b) => a.at - b.at);
 }
@@ -507,8 +602,9 @@ function speakPending() {
   const openTasks = state.tasks.filter((task) => !task.done);
   const openAttentions = openFollowUps();
   const nextItems = reminderItems().filter((item) => item.at >= new Date()).slice(0, 4);
-  const monthItems = financialItems().filter((item) => {
-    const date = parseDate(item.date);
+  const monthRange = financeRangeFor("month");
+  const monthItems = expandFinancialItems(monthRange).filter((item) => {
+    const date = parseDate(financeOccurrenceDate(item));
     return date && isThisMonth(date);
   });
   const { balance } = financeTotals(monthItems);
@@ -582,7 +678,7 @@ function eventsToday() {
   const now = new Date();
   return state.events
     .map((event) => ({ ...event, startDate: parseDate(event.start), endDate: parseDate(event.end) }))
-    .filter((event) => event.startDate && isSameDay(event.startDate, now))
+    .filter((event) => event.startDate && isSameDay(event.startDate, now) && !isEventFinished(event, now))
     .sort((a, b) => a.startDate - b.startDate);
 }
 
@@ -621,6 +717,10 @@ function buildDayPlan() {
   const lateTasks = overdueTasks();
   const followUps = openFollowUps();
   const withoutDate = followUps.filter((attention) => !attention.followUp);
+  const financeDue = financeReminderItems().filter((item) => {
+    const due = parseReminderDate(financeOccurrenceDate(item));
+    return due && isSameDay(due, new Date());
+  });
   const slots = freeSlotsToday();
   const recommendations = [];
 
@@ -633,7 +733,10 @@ function buildDayPlan() {
   if (withoutDate.length) {
     recommendations.push(`Programar próxima fecha para ${withoutDate.length} seguimiento${withoutDate.length === 1 ? "" : "s"} abierto${withoutDate.length === 1 ? "" : "s"} sin revisión.`);
   }
-  if (slots.length && (lateTasks.length || todayTasks.length || withoutDate.length)) {
+  if (financeDue.length) {
+    recommendations.push(`Revisar ${financeDue.length} compromiso${financeDue.length === 1 ? "" : "s"} financiero${financeDue.length === 1 ? "" : "s"} que vence${financeDue.length === 1 ? "" : "n"} hoy.`);
+  }
+  if (slots.length && (lateTasks.length || todayTasks.length || withoutDate.length || financeDue.length)) {
     const first = slots[0];
     recommendations.push(`Usar el espacio de ${formatTime.format(first.start)} a ${formatTime.format(first.end)} para avanzar lo más urgente.`);
   }
@@ -647,6 +750,7 @@ function buildDayPlan() {
     lateTasks,
     followUps,
     withoutDate,
+    financeDue,
     slots,
     recommendations
   };
@@ -657,12 +761,20 @@ function renderDayPlan(speakResult = false) {
   const slotText = plan.slots.length
     ? plan.slots.slice(0, 3).map((slot) => `${formatTime.format(slot.start)} - ${formatTime.format(slot.end)}`).join(", ")
     : "Sin espacios libres claros en horario laboral";
+  const dueToday = plan.agenda
+    .filter((item) => isSameDay(item.at, new Date()))
+    .slice(0, 6);
 
   $("#dayPlan").innerHTML = `
     <div class="plan-grid">
       <article><strong>${plan.agenda.length}</strong><span>citas, vencimientos o revisiones hoy</span></article>
       <article><strong>${plan.lateTasks.length}</strong><span>pendientes vencidos</span></article>
       <article><strong>${plan.withoutDate.length}</strong><span>seguimientos sin próxima fecha</span></article>
+      <article><strong>${plan.financeDue.length}</strong><span>compromisos financieros hoy</span></article>
+    </div>
+    <div class="plan-block">
+      <span>Vence hoy</span>
+      ${dueToday.length ? `<ul>${dueToday.map((item) => `<li>${escapeHtml(item.kind)}: ${escapeHtml(item.title)} · ${formatTime.format(item.at)}</li>`).join("")}</ul>` : "<p>Nada con vencimiento para hoy.</p>"}
     </div>
     <div class="plan-block">
       <span>Disponibilidad</span>
@@ -698,6 +810,15 @@ function renderControls() {
   $("#alarmProfile").textContent = `${activeLeads.length} alarmas`;
   $("#enableAlarms").textContent = state.settings.alarmsEnabled ? "Alarmas activas" : "Activar alarmas";
   $("#enableAlarms").classList.toggle("active", state.settings.alarmsEnabled);
+  renderAlarmPreview();
+}
+
+function renderAlarmPreview() {
+  const now = new Date();
+  const items = reminderItems().filter((item) => item.at >= now).slice(0, 10);
+  const target = $("#alarmPreview");
+  if (!target) return;
+  target.innerHTML = items.map(renderTimelineItem).join("") || emptyState("Sin avisos programados");
 }
 
 function renderMetrics() {
@@ -705,8 +826,9 @@ function renderMetrics() {
   const openTasks = state.tasks.filter((task) => !task.done);
   const dueToday = reminderItems().filter((item) => isSameDay(item.at, now));
   const openAttentions = openFollowUps();
-  const monthItems = financialItems().filter((item) => {
-    const date = parseDate(item.date);
+  const monthRange = financeRangeFor("month");
+  const monthItems = expandFinancialItems(monthRange).filter((item) => {
+    const date = parseDate(financeOccurrenceDate(item));
     return date && isThisMonth(date);
   });
   const { balance } = financeTotals(monthItems);
@@ -723,20 +845,17 @@ function renderDashboard() {
 
   const reminders = reminderItems();
   const next = reminders.find((item) => item.at >= now);
-  const overdue = reminders.filter((item) => item.at < now);
+  const overdue = reminders.filter((item) => item.at < now).sort((a, b) => b.at - a.at).slice(0, 3);
   const today = reminders.filter((item) => item.at >= now && isSameDay(item.at, now)).slice(0, 5);
+  const rows = [...overdue, ...today];
 
   $("#nextReminder").innerHTML = next
     ? `<span>Próximo</span><strong>${escapeHtml(next.title)}</strong><small>${next.kind} · ${formatDateTime.format(next.at)}</small>`
     : `<span>Próximo</span><strong>Sin recordatorios programados</strong><small>Agenda despejada</small>`;
 
-  $("#dueList").innerHTML = today.length
-    ? today.map(renderReminderRow).join("")
-    : emptyState("Nada con hora para hoy");
-
-  if (overdue.length) {
-    $("#dueList").insertAdjacentHTML("afterbegin", overdue.slice(0, 3).map((item) => renderReminderRow(item, true)).join(""));
-  }
+  $("#dueList").innerHTML = rows.length
+    ? rows.map((item) => renderReminderRow(item, item.at < now)).join("")
+    : emptyState("Nada vence hoy");
 
   $("#timeline").innerHTML = reminders.filter((item) => item.at >= now).slice(0, 7).map(renderTimelineItem).join("") ||
     emptyState("Sin agenda próxima");
@@ -815,18 +934,22 @@ function renderSchedule() {
 }
 
 function financialItems() {
-  return [...(state.transactions || [])].map((item) => ({
-    ...item,
-    type: item.type === "income" ? "income" : "expense"
-  }));
+  return [...(state.transactions || [])].map(normalizeFinanceItem);
 }
 
 function financeYears(items = financialItems()) {
   const years = items
-    .map((item) => parseDate(item.date)?.getFullYear())
+    .flatMap((item) => [item.date, item.due])
+    .map((value) => parseDate(value)?.getFullYear())
     .filter((year) => Number.isInteger(year));
 
-  years.push(new Date().getFullYear());
+  const currentYear = new Date().getFullYear();
+  items.forEach((item) => {
+    const anchorYear = financeItemAnchor(item)?.getFullYear();
+    if (!anchorYear || item.frequency === "once") return;
+    for (let year = anchorYear; year <= currentYear + 1; year += 1) years.push(year);
+  });
+  years.push(currentYear, currentYear + 1);
   return [...new Set(years)].sort((a, b) => b - a);
 }
 
@@ -846,6 +969,76 @@ function inDateRange(date, range) {
   return true;
 }
 
+function financeTypeLabel(item) {
+  return FINANCE_TYPE_LABELS[item.type] || "Movimiento";
+}
+
+function financeFrequencyLabel(frequency) {
+  return FINANCE_FREQUENCIES[normalizeFinanceFrequency(frequency)].label;
+}
+
+function financeStatusLabel(status) {
+  return FINANCE_STATUS_LABELS[status] || "Pendiente";
+}
+
+function financeOccurrenceDate(item) {
+  return item.occurrenceDate || item.due || item.date;
+}
+
+function financeItemAnchor(item) {
+  return parseDate(item.due || item.date);
+}
+
+function expandFinancialItems(range, items = financialItems()) {
+  return items.flatMap((item) => {
+    const anchor = financeItemAnchor(item);
+    if (!anchor) return [];
+
+    const frequency = normalizeFinanceFrequency(item.frequency);
+    const months = FINANCE_FREQUENCIES[frequency].months;
+
+    if (!months || !range.start || !range.end) {
+      return [{
+        ...item,
+        frequency,
+        occurrenceDate: inputDateValue(anchor)
+      }];
+    }
+
+    let occurrence = new Date(anchor);
+    let guard = 0;
+    while (occurrence < range.start && guard < 240) {
+      occurrence = addMonths(occurrence, months);
+      guard += 1;
+    }
+
+    const occurrences = [];
+    while (occurrence <= range.end && guard < 300) {
+      occurrences.push({
+        ...item,
+        frequency,
+        occurrenceDate: inputDateValue(occurrence)
+      });
+      occurrence = addMonths(occurrence, months);
+      guard += 1;
+    }
+    return occurrences;
+  });
+}
+
+function financeReminderItems() {
+  const now = new Date();
+  const range = {
+    start: startOfDay(addDays(now, -365)),
+    end: endOfDay(addDays(now, 365))
+  };
+
+  return expandFinancialItems(range)
+    .filter((item) => item.status === "pending")
+    .filter((item) => parseReminderDate(financeOccurrenceDate(item)))
+    .sort((a, b) => parseReminderDate(financeOccurrenceDate(a)) - parseReminderDate(financeOccurrenceDate(b)));
+}
+
 function financeTotals(items) {
   const income = items
     .filter((item) => item.type === "income")
@@ -853,10 +1046,14 @@ function financeTotals(items) {
   const expense = items
     .filter((item) => item.type === "expense")
     .reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const debt = items
+    .filter((item) => item.type === "debt" && item.status !== "paid")
+    .reduce((sum, item) => sum + Number(item.amount || 0), 0);
 
   return {
     income,
     expense,
+    debt,
     balance: income - expense
   };
 }
@@ -867,34 +1064,40 @@ function renderFinance() {
   const period = $("#financePeriod").value;
   const type = $("#financeType").value;
   const range = financeRangeFor(period, $("#financeYear").value);
-  const baseItems = financialItems().filter((item) => {
-    const date = parseDate(item.date);
+  const expandedItems = expandFinancialItems(range);
+  const baseItems = expandedItems.filter((item) => {
+    const date = parseDate(financeOccurrenceDate(item));
     return period === "all" || inDateRange(date, range);
   });
   const items = baseItems.filter((item) => type === "all" || item.type === type)
-    .sort((a, b) => parseDate(b.date) - parseDate(a.date));
+    .sort((a, b) => parseDate(financeOccurrenceDate(b)) - parseDate(financeOccurrenceDate(a)));
 
   const totals = financeTotals(baseItems);
 
   $("#financeIncome").textContent = formatMoney.format(totals.income);
   $("#financeExpense").textContent = formatMoney.format(totals.expense);
   $("#financeBalance").textContent = formatMoney.format(totals.balance);
+  $("#financeDebt").textContent = formatMoney.format(totals.debt);
   $("#financeYear").hidden = period !== "year";
 
   $("#financeList").innerHTML = items.map((item) => {
     const amount = Number(item.amount || 0);
     const signedAmount = item.type === "income" ? amount : -amount;
-    const label = item.type === "income" ? "Ingreso" : "Gasto";
+    const label = financeTypeLabel(item);
+    const occurrenceDate = parseDate(financeOccurrenceDate(item));
+    const frequency = financeFrequencyLabel(item.frequency);
+    const status = financeStatusLabel(item.status);
 
     return `
       <article class="item finance-item ${item.type}">
         <div>
           <div class="item-title">${escapeHtml(item.description)}</div>
-          <div class="item-meta">${label} · ${escapeHtml(item.category)} · ${item.date ? formatDate.format(parseDate(item.date)) : "Sin fecha"}</div>
+          <div class="item-meta">${label} · ${escapeHtml(item.category)} · ${occurrenceDate ? formatDate.format(occurrenceDate) : "Sin fecha"} · ${escapeHtml(frequency)} · ${escapeHtml(status)}</div>
           ${item.notes ? `<p>${escapeHtml(item.notes)}</p>` : ""}
         </div>
         <div class="money ${item.type}">${formatMoney.format(signedAmount)}</div>
         <div class="item-actions">
+          ${item.status === "pending" ? `<button type="button" data-action="mark-finance-paid" data-id="${item.id}">Pagado</button>` : ""}
           <button type="button" data-action="delete-finance" data-id="${item.id}">Borrar</button>
         </div>
       </article>
@@ -903,11 +1106,12 @@ function renderFinance() {
 }
 
 function renderReminderRow(item, urgent = false) {
+  const label = urgent ? (item.collection === "events" ? "En curso" : "Vencido") : (isSameDay(item.at, new Date()) ? "Vence hoy" : item.kind);
   return `
     <article class="mini-row ${urgent ? "urgent" : ""}">
-      <span>${escapeHtml(item.kind)}</span>
+      <span>${escapeHtml(label)}</span>
       <strong>${escapeHtml(item.title)}</strong>
-      <time>${formatDateTime.format(item.at)}</time>
+      <time>${escapeHtml(item.kind)} · ${formatTime.format(item.at)}</time>
     </article>
   `;
 }
@@ -928,7 +1132,8 @@ function renderScheduleItem(item) {
   const actions = {
     tasks: `<button type="button" data-action="toggle-task" data-id="${item.rawId}">Listo</button>`,
     attentions: `<button type="button" data-action="close-attention" data-id="${item.rawId}">Cerrar</button>`,
-    events: `<button type="button" data-action="delete-event" data-id="${item.rawId}">Borrar</button>`
+    events: `<button type="button" data-action="delete-event" data-id="${item.rawId}">Borrar</button>`,
+    transactions: `<button type="button" data-action="delete-finance" data-id="${item.rawId}">Borrar</button>`
   };
 
   return `
@@ -987,6 +1192,15 @@ function importData(file) {
 function setDefaultDates() {
   const today = inputDateValue();
   $("#financeForm [name='date']").value = today;
+  $("#financeForm [name='due']").value = "";
+  syncFinanceFormDefaults();
+}
+
+function syncFinanceFormDefaults() {
+  const form = $("#financeForm");
+  const type = form.querySelector("[name='type']").value;
+  const status = form.querySelector("[name='status']");
+  if (type === "debt") status.value = "pending";
 }
 
 function normalizeText(value) {
@@ -1283,6 +1497,7 @@ function bindEvents() {
   $("#taskFilter").addEventListener("change", renderTasks);
   $("#attentionSearch").addEventListener("input", renderAttentions);
   $("#scheduleRange").addEventListener("change", renderSchedule);
+  $("#financeForm [name='type']").addEventListener("change", syncFinanceFormDefaults);
   $("#financePeriod").addEventListener("change", renderFinance);
   $("#financeType").addEventListener("change", renderFinance);
   $("#financeYear").addEventListener("change", renderFinance);
@@ -1301,6 +1516,7 @@ function bindEvents() {
     if (action === "delete-attention") deleteItem("attentions", id);
     if (action === "delete-event") deleteItem("events", id);
     if (action === "delete-expense") deleteItem("expenses", id);
+    if (action === "mark-finance-paid") updateItem("transactions", id, { status: "paid" });
     if (action === "delete-finance") deleteItem("transactions", id);
   });
 }
@@ -1310,7 +1526,11 @@ bindPwa();
 setDefaultDates();
 render();
 window.setInterval(() => {
+  renderMetrics();
   renderDashboard();
+  renderDayPlan();
+  renderSchedule();
+  renderAlarmPreview();
   checkAlarms();
 }, 30000);
 
