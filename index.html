@@ -4,42 +4,61 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Asistente de Control</title>
-    <meta name="theme-color" content="#087f7b">
+    <meta name="theme-color" content="#173f46">
     <meta name="description" content="Asistente para agenda, pendientes, seguimientos, finanzas y planeación del día.">
     <link rel="manifest" href="manifest.json">
     <link rel="icon" href="icon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="icon.svg">
-    <link rel="stylesheet" href="styles.css?v=8">
+    <link rel="stylesheet" href="styles.css?v=9">
   </head>
   <body>
     <div class="app-shell">
-      <header class="topbar">
-        <div>
-          <p class="eyebrow">Asistente operativo</p>
-          <h1>Control diario</h1>
+      <aside class="sidebar">
+        <div class="brand-lockup">
+          <img src="icon.svg" alt="" width="48" height="48">
+          <div>
+            <strong>Asistente</strong>
+            <span>Control personal</span>
+          </div>
         </div>
-        <div class="top-actions">
-          <button id="installApp" class="install-btn" type="button" hidden>Instalar app</button>
-          <button id="voiceCommand" class="primary-btn" type="button">Programar por voz</button>
-          <button id="speakNow" class="icon-btn wide" type="button">Leer mi día</button>
-          <button id="exportData" class="icon-btn" type="button" aria-label="Exportar datos">Exportar</button>
-          <label class="icon-btn file-btn" aria-label="Importar datos">
-            Importar
-            <input id="importData" type="file" accept="application/json">
-          </label>
+
+        <nav class="tabs" aria-label="Secciones">
+          <button class="tab active" type="button" data-view="today"><span aria-hidden="true">01</span> Mi día</button>
+          <button class="tab" type="button" data-view="schedule"><span aria-hidden="true">02</span> Agenda</button>
+          <button class="tab" type="button" data-view="tasks"><span aria-hidden="true">03</span> Pendientes</button>
+          <button class="tab" type="button" data-view="followups"><span aria-hidden="true">04</span> Seguimientos</button>
+          <button class="tab" type="button" data-view="finance"><span aria-hidden="true">05</span> Finanzas</button>
+          <button class="tab" type="button" data-view="alarms"><span aria-hidden="true">06</span> Alarmas</button>
+        </nav>
+
+        <div class="sidebar-status">
+          <span id="sidebarSyncDot" class="status-dot"></span>
+          <div>
+            <strong id="sidebarSyncLabel">Calendar sin conectar</strong>
+            <span>Sincronización de agenda</span>
+          </div>
         </div>
-      </header>
+      </aside>
 
-      <nav class="tabs" aria-label="Secciones">
-        <button class="tab active" type="button" data-view="today">Mi día</button>
-        <button class="tab" type="button" data-view="schedule">Agenda</button>
-        <button class="tab" type="button" data-view="tasks">Pendientes</button>
-        <button class="tab" type="button" data-view="followups">Seguimientos</button>
-        <button class="tab" type="button" data-view="finance">Finanzas</button>
-        <button class="tab" type="button" data-view="alarms">Alarmas</button>
-      </nav>
+      <div class="workspace">
+        <header class="topbar">
+          <div class="page-heading">
+            <p id="currentDateLabel" class="eyebrow">Organización diaria</p>
+            <h1 id="viewTitle">Mi día</h1>
+            <p id="viewSubtitle" class="view-subtitle">Lo importante, ordenado para hoy.</p>
+          </div>
+          <div class="top-actions">
+            <button id="calendarConnection" class="connection-btn" type="button">
+              <span id="calendarConnectionDot" class="status-dot"></span>
+              <span id="calendarConnectionLabel">Conectar Calendar</span>
+            </button>
+            <button id="installApp" class="install-btn" type="button" hidden>Instalar</button>
+            <button id="voiceCommand" class="primary-btn" type="button">Programar por voz</button>
+            <button id="speakNow" class="icon-btn" type="button">Leer mi día</button>
+          </div>
+        </header>
 
-      <main>
+        <main>
         <section id="today" class="view active">
           <div class="summary-grid" aria-label="Resumen">
             <article class="metric">
@@ -167,7 +186,11 @@
         <section id="schedule" class="view">
           <div class="split-layout">
             <form id="eventForm" class="panel form-panel" data-form="event">
-              <h2>Nueva cita o evento</h2>
+              <div class="panel-head form-title-row">
+                <h2 id="eventFormTitle">Nueva cita o evento</h2>
+                <button id="cancelEventEdit" class="text-btn" type="button" hidden>Cancelar edición</button>
+              </div>
+              <input name="id" type="hidden">
               <label>Actividad
                 <input name="title" type="text" required placeholder="Cita, reunión, entrega">
               </label>
@@ -185,7 +208,7 @@
               <label>Notas
                 <textarea name="notes" rows="4" placeholder="Objetivo, asistentes, materiales"></textarea>
               </label>
-              <button class="primary-btn" type="submit">Guardar evento</button>
+              <button id="saveEventButton" class="primary-btn" type="submit">Guardar evento</button>
             </form>
 
             <section class="panel">
@@ -317,6 +340,30 @@
         </section>
 
         <section id="alarms" class="view">
+          <section class="panel integration-panel">
+            <div class="integration-copy">
+              <div class="integration-mark" aria-hidden="true">G</div>
+              <div>
+                <p class="section-kicker">Integración</p>
+                <h2>Google Calendar</h2>
+                <p id="calendarSyncMessage">Conecta tu calendario para sincronizar las citas automáticamente.</p>
+              </div>
+            </div>
+            <form id="calendarSyncForm" class="connection-form">
+              <label>Dirección del servicio de Google
+                <input id="calendarSyncEndpoint" name="endpoint" type="url" inputmode="url" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off">
+              </label>
+              <label>Clave privada
+                <input id="calendarSyncSecret" name="secret" type="password" placeholder="Clave generada en Google" autocomplete="off">
+              </label>
+              <div class="connection-actions">
+                <button class="primary-btn" type="submit">Conectar calendario</button>
+                <button id="syncCalendarNow" class="icon-btn" type="button">Sincronizar agenda</button>
+                <button id="disconnectCalendar" class="text-btn danger" type="button">Desconectar</button>
+              </div>
+            </form>
+          </section>
+
           <div class="split-layout alarm-layout">
             <section class="panel alarm-panel">
               <div class="panel-head">
@@ -341,8 +388,23 @@
               <div id="alarmPreview" class="timeline"></div>
             </section>
           </div>
+
+          <section class="panel data-panel">
+            <div>
+              <p class="section-kicker">Seguridad</p>
+              <h2>Datos y respaldo</h2>
+            </div>
+            <div class="data-actions">
+              <button id="exportData" class="icon-btn" type="button" aria-label="Exportar datos">Exportar respaldo</button>
+              <label class="icon-btn file-btn" aria-label="Importar datos">
+                Importar respaldo
+                <input id="importData" type="file" accept="application/json">
+              </label>
+            </div>
+          </section>
         </section>
-      </main>
+        </main>
+      </div>
     </div>
 
     <div id="voicePanel" class="voice-panel" hidden>
@@ -361,6 +423,6 @@
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-    <script src="app.js?v=8"></script>
+    <script src="app.js?v=9"></script>
   </body>
 </html>

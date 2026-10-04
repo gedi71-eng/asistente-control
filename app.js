@@ -1,4 +1,14 @@
 const STORAGE_KEY = "asistente-control-v1";
+const GOOGLE_SYNC_STORAGE_KEY = "asistente-control-google-sync-v1";
+
+const VIEW_COPY = {
+  today: ["Mi día", "Lo importante, ordenado para hoy."],
+  schedule: ["Agenda", "Citas, reuniones y programación en un solo lugar."],
+  tasks: ["Pendientes", "Tareas abiertas, prioridades y vencimientos."],
+  followups: ["Seguimientos", "Asuntos que necesitan continuidad hasta cerrarse."],
+  finance: ["Finanzas", "Ingresos, gastos, deudas y compromisos."],
+  alarms: ["Alarmas y conexiones", "Avisos y sincronización automática de tu agenda."]
+};
 
 const defaultState = {
   tasks: [],
@@ -43,6 +53,8 @@ const FINANCE_STATUS_LABELS = {
 };
 
 let state = loadState();
+let calendarSyncConfig = loadCalendarSyncConfig();
+let calendarSyncPending = 0;
 let audioContext = null;
 let deferredInstallPrompt = null;
 let pendingVoiceAction = null;
@@ -79,6 +91,23 @@ function loadState() {
   }
 }
 
+function loadCalendarSyncConfig() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(GOOGLE_SYNC_STORAGE_KEY));
+    return {
+      endpoint: cleanText(stored?.endpoint),
+      secret: cleanText(stored?.secret),
+      enabled: Boolean(stored?.enabled && stored?.endpoint && stored?.secret)
+    };
+  } catch {
+    return { endpoint: "", secret: "", enabled: false };
+  }
+}
+
+function saveCalendarSyncConfig() {
+  localStorage.setItem(GOOGLE_SYNC_STORAGE_KEY, JSON.stringify(calendarSyncConfig));
+}
+
 function mergeState(base, incoming) {
   const merged = {
     ...base,
@@ -112,6 +141,127 @@ function mergeState(base, incoming) {
 
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function calendarSyncReady() {
+  return Boolean(calendarSyncConfig.enabled && calendarSyncConfig.endpoint && calendarSyncConfig.secret);
+}
+
+function calendarSyncPayload(event) {
+  const start = parseDate(event?.start);
+  if (!event || !start) return null;
+  const end = eventEndDate(event) || addMinutes(start, 60);
+  return {
+    sourceId: event.id,
+    title: event.title,
+    start: start.toISOString(),
+    end: end.toISOString(),
+    location: event.place || "",
+    description: event.notes || "",
+    reminders: activeLeadTimes()
+  };
+}
+
+function updateCalendarSyncUi() {
+  const connected = calendarSyncReady();
+  const syncing = connected && calendarSyncPending > 0;
+  const label = syncing ? "Sincronizando..." : connected ? "Calendar conectado" : "Conectar Calendar";
+  const sidebarLabel = syncing ? "Sincronizando agenda" : connected ? "Calendar conectado" : "Calendar sin conectar";
+  const message = connected
+    ? "Las citas nuevas, editadas y eliminadas se sincronizan automáticamente con Google Calendar."
+    : "Conecta tu calendario para sincronizar las citas automáticamente.";
+
+  [$("#calendarConnectionDot"), $("#sidebarSyncDot")].filter(Boolean).forEach((dot) => {
+    dot.classList.toggle("connected", connected && !syncing);
+    dot.classList.toggle("syncing", syncing);
+  });
+  if ($("#calendarConnectionLabel")) $("#calendarConnectionLabel").textContent = label;
+  if ($("#sidebarSyncLabel")) $("#sidebarSyncLabel").textContent = sidebarLabel;
+  if ($("#calendarSyncMessage")) $("#calendarSyncMessage").textContent = message;
+  if ($("#calendarSyncEndpoint")) $("#calendarSyncEndpoint").value = calendarSyncConfig.endpoint;
+  if ($("#calendarSyncSecret")) $("#calendarSyncSecret").value = calendarSyncConfig.secret;
+  if ($("#syncCalendarNow")) $("#syncCalendarNow").disabled = !connected || syncing;
+  if ($("#disconnectCalendar")) $("#disconnectCalendar").hidden = !connected;
+}
+
+async function sendCalendarSync(action, event, quiet = false) {
+  if (!calendarSyncReady()) return false;
+  const eventPayload = action === "delete" ? { sourceId: event?.id } : calendarSyncPayload(event);
+  if (!eventPayload?.sourceId) return false;
+
+  calendarSyncPending += 1;
+  updateCalendarSyncUi();
+  const body = new URLSearchParams({
+    secret: calendarSyncConfig.secret,
+    action,
+    payload: JSON.stringify(eventPayload)
+  });
+
+  try {
+    await fetch(calendarSyncConfig.endpoint, {
+      method: "POST",
+      mode: "no-cors",
+      body
+    });
+    if (!quiet) toast(action === "delete" ? "Cita retirada de Google Calendar" : "Cita enviada a Google Calendar");
+    return true;
+  } catch {
+    if (!quiet) toast("No se pudo sincronizar con Google Calendar");
+    return false;
+  } finally {
+    calendarSyncPending = Math.max(0, calendarSyncPending - 1);
+    updateCalendarSyncUi();
+  }
+}
+
+async function syncAllCalendarEvents() {
+  if (!calendarSyncReady()) {
+    toast("Primero conecta Google Calendar");
+    return;
+  }
+  const events = state.events.filter((event) => event.start && !isEventFinished(event));
+  if (!events.length) {
+    toast("No hay citas próximas para sincronizar");
+    return;
+  }
+  await Promise.all(events.map((event) => sendCalendarSync("upsert", event, true)));
+  toast(`${events.length} ${events.length === 1 ? "cita sincronizada" : "citas sincronizadas"}`);
+}
+
+function checkCalendarService(endpoint) {
+  return new Promise((resolve) => {
+    const callbackName = `__calendarCheck${Date.now()}`;
+    const script = document.createElement("script");
+    let settled = false;
+    const timer = window.setTimeout(() => finish(false), 9000);
+    const finish = (success) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      script.remove();
+      delete window[callbackName];
+      resolve(success);
+    };
+    window[callbackName] = (response) => finish(Boolean(response?.ok));
+    script.onerror = () => finish(false);
+    const url = new URL(endpoint);
+    url.searchParams.set("prefix", callbackName);
+    url.searchParams.set("check", "1");
+    script.src = url.toString();
+    document.head.appendChild(script);
+  });
+}
+
+function activateView(viewName) {
+  const target = $(`.tab[data-view='${viewName}']`);
+  const view = $(`#${viewName}`);
+  if (!target || !view) return;
+  $$(".tab").forEach((button) => button.classList.toggle("active", button === target));
+  $$(".view").forEach((section) => section.classList.toggle("active", section === view));
+  const [title, subtitle] = VIEW_COPY[viewName] || VIEW_COPY.today;
+  $("#viewTitle").textContent = title;
+  $("#viewSubtitle").textContent = subtitle;
+  if (window.innerWidth < 861) window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function uid() {
@@ -364,6 +514,7 @@ function createItem(type, formData) {
     id: uid(),
     createdAt: new Date().toISOString()
   };
+  let createdEvent = null;
 
   if (type === "task") {
     state.tasks.unshift({
@@ -390,15 +541,23 @@ function createItem(type, formData) {
   }
 
   if (type === "event") {
-    state.events.unshift({
-      ...base,
+    const editingId = cleanText(formData.get("id"));
+    const eventData = {
       title: cleanText(formData.get("title")),
       start: formData.get("start"),
       end: formData.get("end"),
       place: cleanText(formData.get("place")),
       notes: cleanText(formData.get("notes"))
-    });
-    toast("Evento guardado");
+    };
+    if (editingId) {
+      state.events = state.events.map((item) => item.id === editingId ? { ...item, ...eventData } : item);
+      createdEvent = state.events.find((item) => item.id === editingId) || null;
+      toast("Evento actualizado");
+    } else {
+      createdEvent = { ...base, ...eventData };
+      state.events.unshift(createdEvent);
+      toast("Evento guardado");
+    }
   }
 
   if (type === "expense") {
@@ -431,6 +590,7 @@ function createItem(type, formData) {
 
   saveState();
   render();
+  if (createdEvent) sendCalendarSync("upsert", createdEvent);
 }
 
 function addTask({ title, due = "", priority = "media", notes = "" }) {
@@ -458,7 +618,7 @@ function addFollowUp({ person, subject, followUp = "", notes = "" }) {
 }
 
 function addEvent({ title, start, end = "", place = "", notes = "" }) {
-  state.events.unshift({
+  const event = {
     id: uid(),
     createdAt: new Date().toISOString(),
     title: cleanText(title),
@@ -466,19 +626,59 @@ function addEvent({ title, start, end = "", place = "", notes = "" }) {
     end,
     place: cleanText(place),
     notes: cleanText(notes)
-  });
+  };
+  state.events.unshift(event);
+  sendCalendarSync("upsert", event);
+  return event;
+}
+
+function setEventEditMode(event = null) {
+  const form = $("#eventForm");
+  form.elements.id.value = event?.id || "";
+  $("#eventFormTitle").textContent = event ? "Editar cita o evento" : "Nueva cita o evento";
+  $("#saveEventButton").textContent = event ? "Guardar cambios" : "Guardar evento";
+  $("#cancelEventEdit").hidden = !event;
+}
+
+function editEvent(id) {
+  const event = state.events.find((item) => item.id === id);
+  if (!event) return;
+  activateView("schedule");
+  const form = $("#eventForm");
+  setEventEditMode(event);
+  form.elements.title.value = event.title || "";
+  form.elements.start.value = event.start || "";
+  form.elements.end.value = event.end || "";
+  form.elements.place.value = event.place || "";
+  form.elements.notes.value = event.notes || "";
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
+  form.elements.title.focus({ preventScroll: true });
+}
+
+function cancelEventEdit() {
+  const form = $("#eventForm");
+  form.reset();
+  setEventEditMode();
+  setDefaultDates();
 }
 
 function updateItem(collection, id, patch) {
   state[collection] = state[collection].map((item) => item.id === id ? { ...item, ...patch } : item);
   saveState();
   render();
+  if (collection === "events") {
+    const event = state.events.find((item) => item.id === id);
+    if (event) sendCalendarSync("upsert", event);
+  }
 }
 
 function deleteItem(collection, id) {
+  const removedItem = state[collection].find((item) => item.id === id);
   state[collection] = state[collection].filter((item) => item.id !== id);
   saveState();
   render();
+  if (collection === "events" && $("#eventForm")?.elements.id.value === id) cancelEventEdit();
+  if (collection === "events" && removedItem) sendCalendarSync("delete", removedItem);
 }
 
 function reminderItems() {
@@ -792,6 +992,7 @@ function renderDayPlan(speakResult = false) {
 }
 
 function render() {
+  renderHeader();
   renderMetrics();
   renderDashboard();
   renderDayPlan();
@@ -800,6 +1001,16 @@ function render() {
   renderSchedule();
   renderFinance();
   renderControls();
+}
+
+function renderHeader() {
+  const value = new Intl.DateTimeFormat("es-CO", {
+    weekday: "long",
+    day: "numeric",
+    month: "long"
+  }).format(new Date());
+  $("#currentDateLabel").textContent = value.charAt(0).toUpperCase() + value.slice(1);
+  updateCalendarSyncUi();
 }
 
 function renderControls() {
@@ -811,6 +1022,7 @@ function renderControls() {
   $("#enableAlarms").textContent = state.settings.alarmsEnabled ? "Alarmas activas" : "Activar alarmas";
   $("#enableAlarms").classList.toggle("active", state.settings.alarmsEnabled);
   renderAlarmPreview();
+  updateCalendarSyncUi();
 }
 
 function renderAlarmPreview() {
@@ -1143,7 +1355,7 @@ function renderScheduleItem(item) {
   const actions = {
     tasks: `<button type="button" data-action="toggle-task" data-id="${item.rawId}">Listo</button>`,
     attentions: `<button type="button" data-action="close-attention" data-id="${item.rawId}">Cerrar</button>`,
-    events: `<button type="button" data-action="delete-event" data-id="${item.rawId}">Borrar</button>`,
+    events: `<button type="button" data-action="edit-event" data-id="${item.rawId}">Editar</button><button type="button" data-action="delete-event" data-id="${item.rawId}">Borrar</button>`,
     transactions: `<button type="button" data-action="delete-finance" data-id="${item.rawId}">Borrar</button>`
   };
 
@@ -1662,17 +1874,62 @@ function bindEvents() {
       event.preventDefault();
       createItem(form.dataset.form, new FormData(form));
       form.reset();
+      if (form.dataset.form === "event") setEventEditMode();
       setDefaultDates();
     });
   });
 
   $$(".tab").forEach((tab) => {
-    tab.addEventListener("click", () => {
-      $$(".tab").forEach((button) => button.classList.remove("active"));
-      $$(".view").forEach((view) => view.classList.remove("active"));
-      tab.classList.add("active");
-      $(`#${tab.dataset.view}`).classList.add("active");
-    });
+    tab.addEventListener("click", () => activateView(tab.dataset.view));
+  });
+
+  $("#calendarConnection").addEventListener("click", () => {
+    activateView("alarms");
+    if (!calendarSyncReady()) $("#calendarSyncEndpoint").focus();
+  });
+
+  $("#calendarSyncForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const endpoint = cleanText(formData.get("endpoint"));
+    const secret = cleanText(formData.get("secret"));
+    let url;
+    try {
+      url = new URL(endpoint);
+    } catch {
+      toast("Escribe una dirección válida del servicio de Google");
+      return;
+    }
+    if (url.protocol !== "https:" || url.hostname !== "script.google.com" || !url.pathname.includes("/macros/s/")) {
+      toast("La dirección debe pertenecer a Google Apps Script");
+      return;
+    }
+    if (!secret) {
+      toast("Escribe la clave privada del servicio");
+      return;
+    }
+
+    toast("Comprobando el servicio de Google...");
+    const available = await checkCalendarService(endpoint);
+    if (!available) {
+      toast("No pude comprobar el servicio. Revisa la dirección y el despliegue");
+      return;
+    }
+
+    calendarSyncConfig = { endpoint, secret, enabled: true };
+    saveCalendarSyncConfig();
+    updateCalendarSyncUi();
+    toast("Google Calendar conectado");
+    syncAllCalendarEvents();
+  });
+
+  $("#syncCalendarNow").addEventListener("click", syncAllCalendarEvents);
+  $("#cancelEventEdit").addEventListener("click", cancelEventEdit);
+  $("#disconnectCalendar").addEventListener("click", () => {
+    calendarSyncConfig = { endpoint: "", secret: "", enabled: false };
+    localStorage.removeItem(GOOGLE_SYNC_STORAGE_KEY);
+    updateCalendarSyncUi();
+    toast("Google Calendar desconectado");
   });
 
   $("#enableAlarms").addEventListener("click", async () => {
@@ -1732,6 +1989,7 @@ function bindEvents() {
     if (action === "delete-task") deleteItem("tasks", id);
     if (action === "close-attention") updateItem("attentions", id, { status: "cerrada" });
     if (action === "delete-attention") deleteItem("attentions", id);
+    if (action === "edit-event") editEvent(id);
     if (action === "delete-event") deleteItem("events", id);
     if (action === "delete-expense") deleteItem("expenses", id);
     if (action === "mark-finance-paid") updateItem("transactions", id, { status: "paid" });

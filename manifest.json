@@ -2,11 +2,11 @@
   "name": "Asistente de Control",
   "short_name": "Asistente",
   "description": "Control de mi día, agenda, pendientes, seguimientos y finanzas.",
-  "start_url": "./index.html",
+  "start_url": "./index.html?v=9",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#f6f4ef",
-  "theme_color": "#087f7b",
+  "background_color": "#eef1f2",
+  "theme_color": "#173f46",
   "orientation": "portrait-primary",
   "icons": [
     {
