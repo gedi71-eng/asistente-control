@@ -513,6 +513,32 @@ main {
   align-items: end;
 }
 
+.calendar-connect-area {
+  display: grid;
+  gap: 12px;
+}
+
+.google-connect-btn {
+  min-width: 190px;
+}
+
+.admin-setup {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.admin-setup summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 780;
+}
+
+.admin-setup[open] summary {
+  margin-bottom: 12px;
+  color: var(--brand);
+}
+
 .connection-actions {
   grid-column: 1 / -1;
   display: flex;

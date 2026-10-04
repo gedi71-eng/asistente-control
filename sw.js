@@ -1,9 +1,10 @@
-const CACHE_NAME = "asistente-control-v8";
+const CACHE_NAME = "asistente-control-v10";
 const APP_SHELL = [
   "./",
-  "./index.html",
-  "./styles.css?v=9",
-  "./app.js?v=9",
+  "./index.html?v=10",
+  "./styles.css?v=10",
+  "./google-config.js?v=10",
+  "./app.js?v=10",
   "./manifest.json",
   "./icon.svg"
 ];

@@ -9,7 +9,7 @@
     <link rel="manifest" href="manifest.json">
     <link rel="icon" href="icon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="icon.svg">
-    <link rel="stylesheet" href="styles.css?v=9">
+    <link rel="stylesheet" href="styles.css?v=10">
   </head>
   <body>
     <div class="app-shell">
@@ -349,19 +349,27 @@
                 <p id="calendarSyncMessage">Conecta tu calendario para sincronizar las citas automáticamente.</p>
               </div>
             </div>
-            <form id="calendarSyncForm" class="connection-form">
-              <label>Dirección del servicio de Google
-                <input id="calendarSyncEndpoint" name="endpoint" type="url" inputmode="url" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off">
-              </label>
-              <label>Clave privada
-                <input id="calendarSyncSecret" name="secret" type="password" placeholder="Clave generada en Google" autocomplete="off">
-              </label>
+            <div class="calendar-connect-area">
               <div class="connection-actions">
-                <button class="primary-btn" type="submit">Conectar calendario</button>
+                <button id="connectGoogleCalendar" class="primary-btn google-connect-btn" type="button">Conectar con Google</button>
                 <button id="syncCalendarNow" class="icon-btn" type="button">Sincronizar agenda</button>
                 <button id="disconnectCalendar" class="text-btn danger" type="button">Desconectar</button>
               </div>
-            </form>
+              <details id="calendarAdminSetup" class="admin-setup">
+                <summary>Configuración del propietario</summary>
+                <form id="calendarSetupForm" class="connection-form">
+                  <label>Dirección del servicio
+                    <input id="calendarSyncEndpoint" name="endpoint" type="url" inputmode="url" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off">
+                  </label>
+                  <label>ID de cliente de Google
+                    <input id="calendarOAuthClientId" name="clientId" type="text" placeholder="...apps.googleusercontent.com" autocomplete="off">
+                  </label>
+                  <div class="connection-actions">
+                    <button class="icon-btn" type="submit">Guardar configuración</button>
+                  </div>
+                </form>
+              </details>
+            </div>
           </section>
 
           <div class="split-layout alarm-layout">
@@ -423,6 +431,7 @@
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-    <script src="app.js?v=9"></script>
+    <script src="google-config.js?v=10"></script>
+    <script src="app.js?v=10"></script>
   </body>
 </html>

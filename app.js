@@ -55,6 +55,7 @@ const FINANCE_STATUS_LABELS = {
 let state = loadState();
 let calendarSyncConfig = loadCalendarSyncConfig();
 let calendarSyncPending = 0;
+let calendarConnectionPoller = null;
 let audioContext = null;
 let deferredInstallPrompt = null;
 let pendingVoiceAction = null;
@@ -92,15 +93,25 @@ function loadState() {
 }
 
 function loadCalendarSyncConfig() {
+  const publicConfig = window.ASISTENTE_CONFIG || {};
   try {
-    const stored = JSON.parse(localStorage.getItem(GOOGLE_SYNC_STORAGE_KEY));
+    const stored = JSON.parse(localStorage.getItem(GOOGLE_SYNC_STORAGE_KEY)) || {};
+    const endpoint = cleanText(publicConfig.googleSyncEndpoint || stored.endpoint);
+    const clientId = cleanText(publicConfig.googleOAuthClientId || stored.clientId);
+    const deviceId = cleanText(stored.deviceId);
     return {
-      endpoint: cleanText(stored?.endpoint),
-      secret: cleanText(stored?.secret),
-      enabled: Boolean(stored?.enabled && stored?.endpoint && stored?.secret)
+      endpoint,
+      clientId,
+      deviceId,
+      connected: Boolean(stored.connected && endpoint && clientId && deviceId)
     };
   } catch {
-    return { endpoint: "", secret: "", enabled: false };
+    return {
+      endpoint: cleanText(publicConfig.googleSyncEndpoint),
+      clientId: cleanText(publicConfig.googleOAuthClientId),
+      deviceId: "",
+      connected: false
+    };
   }
 }
 
@@ -144,7 +155,17 @@ function saveState() {
 }
 
 function calendarSyncReady() {
-  return Boolean(calendarSyncConfig.enabled && calendarSyncConfig.endpoint && calendarSyncConfig.secret);
+  return Boolean(calendarSyncConfig.connected && calendarSyncConfig.endpoint && calendarSyncConfig.clientId && calendarSyncConfig.deviceId);
+}
+
+function calendarSetupReady() {
+  return Boolean(calendarSyncConfig.endpoint && calendarSyncConfig.clientId);
+}
+
+function secureRandomId(byteLength = 32) {
+  const bytes = new Uint8Array(byteLength);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
 }
 
 function calendarSyncPayload(event) {
@@ -164,12 +185,15 @@ function calendarSyncPayload(event) {
 
 function updateCalendarSyncUi() {
   const connected = calendarSyncReady();
+  const configured = calendarSetupReady();
   const syncing = connected && calendarSyncPending > 0;
   const label = syncing ? "Sincronizando..." : connected ? "Calendar conectado" : "Conectar Calendar";
   const sidebarLabel = syncing ? "Sincronizando agenda" : connected ? "Calendar conectado" : "Calendar sin conectar";
   const message = connected
     ? "Las citas nuevas, editadas y eliminadas se sincronizan automáticamente con Google Calendar."
-    : "Conecta tu calendario para sincronizar las citas automáticamente.";
+    : configured
+      ? "Selecciona tu cuenta de Google una vez para activar la sincronización automática."
+      : "El propietario debe configurar el servicio antes de conectar Google Calendar.";
 
   [$("#calendarConnectionDot"), $("#sidebarSyncDot")].filter(Boolean).forEach((dot) => {
     dot.classList.toggle("connected", connected && !syncing);
@@ -179,9 +203,11 @@ function updateCalendarSyncUi() {
   if ($("#sidebarSyncLabel")) $("#sidebarSyncLabel").textContent = sidebarLabel;
   if ($("#calendarSyncMessage")) $("#calendarSyncMessage").textContent = message;
   if ($("#calendarSyncEndpoint")) $("#calendarSyncEndpoint").value = calendarSyncConfig.endpoint;
-  if ($("#calendarSyncSecret")) $("#calendarSyncSecret").value = calendarSyncConfig.secret;
+  if ($("#calendarOAuthClientId")) $("#calendarOAuthClientId").value = calendarSyncConfig.clientId;
+  if ($("#connectGoogleCalendar")) $("#connectGoogleCalendar").hidden = connected;
   if ($("#syncCalendarNow")) $("#syncCalendarNow").disabled = !connected || syncing;
   if ($("#disconnectCalendar")) $("#disconnectCalendar").hidden = !connected;
+  if ($("#calendarAdminSetup")) $("#calendarAdminSetup").hidden = connected;
 }
 
 async function sendCalendarSync(action, event, quiet = false) {
@@ -192,7 +218,7 @@ async function sendCalendarSync(action, event, quiet = false) {
   calendarSyncPending += 1;
   updateCalendarSyncUi();
   const body = new URLSearchParams({
-    secret: calendarSyncConfig.secret,
+    deviceId: calendarSyncConfig.deviceId,
     action,
     payload: JSON.stringify(eventPayload)
   });
@@ -228,8 +254,12 @@ async function syncAllCalendarEvents() {
   toast(`${events.length} ${events.length === 1 ? "cita sincronizada" : "citas sincronizadas"}`);
 }
 
-function checkCalendarService(endpoint) {
+function checkCalendarConnection() {
   return new Promise((resolve) => {
+    if (!calendarSyncConfig.endpoint || !calendarSyncConfig.deviceId) {
+      resolve(false);
+      return;
+    }
     const callbackName = `__calendarCheck${Date.now()}`;
     const script = document.createElement("script");
     let settled = false;
@@ -242,14 +272,124 @@ function checkCalendarService(endpoint) {
       delete window[callbackName];
       resolve(success);
     };
-    window[callbackName] = (response) => finish(Boolean(response?.ok));
+    window[callbackName] = (response) => finish(Boolean(response?.ok && response?.connected));
     script.onerror = () => finish(false);
-    const url = new URL(endpoint);
-    url.searchParams.set("prefix", callbackName);
-    url.searchParams.set("check", "1");
-    script.src = url.toString();
-    document.head.appendChild(script);
+    try {
+      const url = new URL(calendarSyncConfig.endpoint);
+      url.searchParams.set("action", "status");
+      url.searchParams.set("deviceId", calendarSyncConfig.deviceId);
+      url.searchParams.set("prefix", callbackName);
+      script.src = url.toString();
+      document.head.appendChild(script);
+    } catch {
+      finish(false);
+    }
   });
+}
+
+async function beginGoogleCalendarConnection() {
+  if (!calendarSetupReady()) {
+    activateView("alarms");
+    const setup = $("#calendarAdminSetup");
+    setup.hidden = false;
+    setup.open = true;
+    $("#calendarSyncEndpoint").focus();
+    toast("Primero completa la configuración del propietario");
+    return;
+  }
+
+  const popup = window.open("about:blank", "asistente-google-calendar", "popup,width=520,height=720");
+  if (!popup) {
+    toast("Permite la ventana de Google para conectar el calendario");
+    return;
+  }
+
+  const deviceId = calendarSyncConfig.deviceId || secureRandomId();
+  const stateId = secureRandomId();
+  calendarSyncConfig = { ...calendarSyncConfig, deviceId, connected: false };
+  saveCalendarSyncConfig();
+  updateCalendarSyncUi();
+
+  try {
+    const prepareBody = new URLSearchParams({
+      action: "prepare",
+      deviceId,
+      payload: JSON.stringify({ state: stateId, origin: window.location.origin })
+    });
+    await fetch(calendarSyncConfig.endpoint, {
+      method: "POST",
+      mode: "no-cors",
+      body: prepareBody
+    });
+
+    const authorizationUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+    authorizationUrl.searchParams.set("client_id", calendarSyncConfig.clientId);
+    authorizationUrl.searchParams.set("redirect_uri", calendarSyncConfig.endpoint);
+    authorizationUrl.searchParams.set("response_type", "code");
+    authorizationUrl.searchParams.set("scope", "https://www.googleapis.com/auth/calendar.events");
+    authorizationUrl.searchParams.set("access_type", "offline");
+    authorizationUrl.searchParams.set("prompt", "consent select_account");
+    authorizationUrl.searchParams.set("include_granted_scopes", "true");
+    authorizationUrl.searchParams.set("state", stateId);
+    popup.location.replace(authorizationUrl.toString());
+    toast("Selecciona tu cuenta de Google");
+    startCalendarConnectionPolling(popup);
+  } catch {
+    popup.close();
+    toast("No pude iniciar la conexión con Google");
+  }
+}
+
+function startCalendarConnectionPolling(popup) {
+  window.clearTimeout(calendarConnectionPoller);
+  const deadline = Date.now() + 2 * 60 * 1000;
+
+  const poll = async () => {
+    const connected = await checkCalendarConnection();
+    if (connected) {
+      calendarSyncConfig.connected = true;
+      saveCalendarSyncConfig();
+      updateCalendarSyncUi();
+      try { popup?.close(); } catch {}
+      toast("Google Calendar conectado");
+      syncAllCalendarEvents();
+      return;
+    }
+    if (Date.now() < deadline) {
+      calendarConnectionPoller = window.setTimeout(poll, 2500);
+    } else {
+      toast("La conexión no se completó. Puedes intentarlo nuevamente");
+    }
+  };
+
+  calendarConnectionPoller = window.setTimeout(poll, 2500);
+}
+
+async function restoreCalendarConnection() {
+  if (!calendarSetupReady() || !calendarSyncConfig.deviceId) return;
+  const connected = await checkCalendarConnection();
+  calendarSyncConfig.connected = connected;
+  saveCalendarSyncConfig();
+  updateCalendarSyncUi();
+}
+
+async function disconnectGoogleCalendar() {
+  if (!calendarSyncReady()) return;
+  if (!window.confirm("¿Desconectar Google Calendar de este dispositivo? Las citas guardadas no se borrarán.")) return;
+
+  const body = new URLSearchParams({
+    action: "disconnect",
+    deviceId: calendarSyncConfig.deviceId,
+    payload: "{}"
+  });
+  try {
+    await fetch(calendarSyncConfig.endpoint, { method: "POST", mode: "no-cors", body });
+  } catch {}
+
+  calendarSyncConfig = { ...calendarSyncConfig, deviceId: "", connected: false };
+  saveCalendarSyncConfig();
+  updateCalendarSyncUi();
+  toast("Google Calendar desconectado");
 }
 
 function activateView(viewName) {
@@ -1884,15 +2024,17 @@ function bindEvents() {
   });
 
   $("#calendarConnection").addEventListener("click", () => {
-    activateView("alarms");
-    if (!calendarSyncReady()) $("#calendarSyncEndpoint").focus();
+    if (calendarSyncReady()) activateView("alarms");
+    else beginGoogleCalendarConnection();
   });
 
-  $("#calendarSyncForm").addEventListener("submit", async (event) => {
+  $("#connectGoogleCalendar").addEventListener("click", beginGoogleCalendarConnection);
+
+  $("#calendarSetupForm").addEventListener("submit", (event) => {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
     const endpoint = cleanText(formData.get("endpoint"));
-    const secret = cleanText(formData.get("secret"));
+    const clientId = cleanText(formData.get("clientId"));
     let url;
     try {
       url = new URL(endpoint);
@@ -1904,33 +2046,21 @@ function bindEvents() {
       toast("La dirección debe pertenecer a Google Apps Script");
       return;
     }
-    if (!secret) {
-      toast("Escribe la clave privada del servicio");
+    if (!clientId.endsWith(".apps.googleusercontent.com")) {
+      toast("Escribe un ID de cliente válido de Google");
       return;
     }
 
-    toast("Comprobando el servicio de Google...");
-    const available = await checkCalendarService(endpoint);
-    if (!available) {
-      toast("No pude comprobar el servicio. Revisa la dirección y el despliegue");
-      return;
-    }
-
-    calendarSyncConfig = { endpoint, secret, enabled: true };
+    calendarSyncConfig = { ...calendarSyncConfig, endpoint, clientId, connected: false };
     saveCalendarSyncConfig();
     updateCalendarSyncUi();
-    toast("Google Calendar conectado");
-    syncAllCalendarEvents();
+    $("#calendarAdminSetup").open = false;
+    toast("Configuración guardada. Ya puedes conectar Google");
   });
 
   $("#syncCalendarNow").addEventListener("click", syncAllCalendarEvents);
   $("#cancelEventEdit").addEventListener("click", cancelEventEdit);
-  $("#disconnectCalendar").addEventListener("click", () => {
-    calendarSyncConfig = { endpoint: "", secret: "", enabled: false };
-    localStorage.removeItem(GOOGLE_SYNC_STORAGE_KEY);
-    updateCalendarSyncUi();
-    toast("Google Calendar desconectado");
-  });
+  $("#disconnectCalendar").addEventListener("click", disconnectGoogleCalendar);
 
   $("#enableAlarms").addEventListener("click", async () => {
     ensureAudio();
@@ -2001,6 +2131,10 @@ bindEvents();
 bindPwa();
 setDefaultDates();
 render();
+restoreCalendarConnection();
+window.addEventListener("focus", () => {
+  if (!calendarSyncReady() && calendarSyncConfig.deviceId) restoreCalendarConnection();
+});
 window.setInterval(() => {
   renderMetrics();
   renderDashboard();

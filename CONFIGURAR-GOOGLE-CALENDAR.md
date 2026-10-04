@@ -1,42 +1,84 @@
-# Conectar Google Calendar
+# Conectar Google Calendar con un clic
 
-Esta configuración se hace una sola vez. La aplicación seguirá publicada en GitHub Pages y Google Apps Script se encargará de crear, actualizar y eliminar las citas en tu calendario.
+Esta configuración la hace una sola vez el propietario de la aplicación. Después, en el computador o en el celular, cada usuario solo pulsa **Conectar con Google**, elige su cuenta y acepta el permiso.
 
-## 1. Crear el servicio
+La aplicación seguirá publicada gratis en GitHub Pages. Google Apps Script se encargará de crear, actualizar y eliminar las citas en Google Calendar. El secreto de Google nunca se sube a GitHub ni se guarda en el teléfono.
 
-1. Abre [Google Apps Script](https://script.google.com/) con la misma cuenta de Google que usas en Calendar.
+## 1. Crear el servicio en Apps Script
+
+1. Abre [Google Apps Script](https://script.google.com/) con tu cuenta de Google.
 2. Pulsa **Nuevo proyecto** y llámalo `Asistente Calendar`.
 3. Borra el contenido inicial del editor.
-4. Copia todo el contenido del archivo `google-calendar-script.js` y pégalo en el editor.
+4. Copia todo el contenido de `google-calendar-script.js` y pégalo en el editor.
 5. Pulsa **Guardar**.
+6. Pulsa **Implementar > Nueva implementación**.
+7. En **Tipo**, elige **Aplicación web**.
+8. En **Ejecutar como**, elige **Yo**.
+9. En **Quién tiene acceso**, elige **Cualquier usuario**.
+10. Pulsa **Implementar** y copia la dirección completa que termina en `/exec`.
 
-## 2. Generar la clave privada
+Guarda esa dirección. Será la **dirección de redireccionamiento autorizada** y también la dirección pública del servicio.
 
-1. En la lista de funciones selecciona `generarClavePrivada`.
-2. Pulsa **Ejecutar** y acepta el permiso para administrar Google Calendar.
-3. Abre **Registro de ejecución** y guarda el texto que aparece después de `CLAVE PRIVADA:`.
+## 2. Preparar Google Cloud
 
-No escribas esa clave dentro de los archivos de GitHub ni la compartas. La aplicación la guardará solamente en el dispositivo donde la conectes.
+1. Abre [Google Cloud Console](https://console.cloud.google.com/).
+2. Crea un proyecto o selecciona uno existente.
+3. En **APIs y servicios > Biblioteca**, busca y habilita **Google Calendar API**.
+4. En **APIs y servicios > Pantalla de consentimiento OAuth**, escribe el nombre `Asistente de Control`, selecciona **Externo** y completa los datos obligatorios.
+5. Si la aplicación está en modo de prueba, agrega como **usuario de prueba** cada correo que vaya a conectarse.
+6. En **APIs y servicios > Credenciales**, pulsa **Crear credenciales > ID de cliente de OAuth**.
+7. Selecciona **Aplicación web**.
+8. En **URI de redireccionamiento autorizados**, pega exactamente la dirección `/exec` copiada en el paso anterior.
+9. Pulsa **Crear** y guarda estos dos datos:
+   - ID de cliente, que termina en `.apps.googleusercontent.com`.
+   - Secreto del cliente.
 
-## 3. Publicar el servicio
+Importante: en el modo de prueba de Google, una autorización de una aplicación externa puede vencer después de siete días. Para un uso estable, cambia el estado de publicación a **En producción** cuando termines las pruebas. Google puede solicitar verificación si la aplicación se ofrece públicamente a muchas personas.
 
-1. Pulsa **Implementar** y después **Nueva implementación**.
-2. En **Tipo**, selecciona **Aplicación web**.
-3. En **Ejecutar como**, selecciona **Yo**.
-4. En **Quién tiene acceso**, selecciona **Cualquier usuario**.
-5. Pulsa **Implementar** y copia la dirección que termina en `/exec`.
+## 3. Guardar el secreto solamente en Apps Script
 
-La dirección puede ser pública porque cada solicitud de modificación también debe llevar la clave privada generada en el paso anterior.
+1. Vuelve al editor de Apps Script.
+2. Al comienzo de `google-calendar-script.js`, dentro de `configurarServicio()`, reemplaza:
+   - `PEGA_AQUI_EL_ID_DE_CLIENTE.apps.googleusercontent.com` por tu ID de cliente.
+   - `PEGA_AQUI_EL_SECRETO_DEL_CLIENTE` por tu secreto.
+3. Deja `APP_ORIGIN` como `https://gedi71-eng.github.io`.
+4. Guarda el archivo.
+5. En la lista de funciones, selecciona `configurarServicio` y pulsa **Ejecutar**.
+6. Acepta los permisos que pida Google.
+7. Pulsa **Implementar > Administrar implementaciones > Editar**.
+8. En **Versión**, selecciona **Nueva versión** y pulsa **Implementar**.
 
-## 4. Conectar la aplicación
+La dirección `/exec` seguirá siendo la misma. No publiques el secreto del cliente en GitHub ni lo escribas en `google-config.js`.
 
-1. Abre Asistente y entra en **Alarmas y conexiones**.
-2. Pega la dirección `/exec` en **Dirección del servicio de Google**.
-3. Pega la clave en **Clave privada**.
-4. Pulsa **Conectar calendario**.
+## 4. Preparar la aplicación
 
-La aplicación comprobará el servicio y sincronizará las citas futuras existentes. Después, cada cita nueva se crea automáticamente en Google Calendar y cada cita borrada desde Asistente también se elimina allí.
+Abre `google-config.js` y escribe solamente los dos datos públicos:
 
-## Actualizar el servicio
+```js
+window.ASISTENTE_CONFIG = {
+  googleSyncEndpoint: "PEGA_AQUI_LA_DIRECCION_QUE_TERMINA_EN_EXEC",
+  googleOAuthClientId: "PEGA_AQUI_EL_ID_DE_CLIENTE.apps.googleusercontent.com"
+};
+```
 
-Si se modifica `google-calendar-script.js`, pega de nuevo el código en Apps Script y usa **Implementar > Administrar implementaciones > Editar > Nueva versión**. Conserva la misma dirección `/exec` y la misma clave privada.
+Después sube a GitHub los archivos actualizados de la aplicación. La configuración administrativa ya no tendrá que escribirse en cada teléfono.
+
+## 5. Conectar un computador o celular
+
+1. Abre la aplicación publicada.
+2. Entra en **Alarmas y conexiones** o pulsa **Conectar Calendar**.
+3. Pulsa **Conectar con Google**.
+4. Elige la cuenta de Google y acepta el permiso de Calendar.
+
+Eso se hace una vez por dispositivo. A partir de ahí:
+
+- Una cita nueva en Asistente se crea automáticamente en Google Calendar.
+- Una cita modificada en Asistente se actualiza en Google Calendar.
+- Una cita eliminada en Asistente se elimina de Google Calendar.
+- Los avisos configurados en Asistente se envían como recordatorios del evento de Google.
+
+La sincronización actual es de Asistente hacia Google Calendar. Los cambios hechos directamente en Google Calendar no regresan todavía a Asistente.
+
+## Actualizar el servicio después
+
+Cuando se cambie `google-calendar-script.js`, pega el código nuevo en Apps Script y usa **Implementar > Administrar implementaciones > Editar > Nueva versión**. Conserva la misma dirección `/exec`, el mismo ID de cliente y el mismo secreto.
