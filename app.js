@@ -1084,9 +1084,14 @@ function renderFinance() {
     const amount = Number(item.amount || 0);
     const signedAmount = item.type === "income" ? amount : -amount;
     const label = financeTypeLabel(item);
-    const occurrenceDate = parseDate(financeOccurrenceDate(item));
+    const calendarDate = financeOccurrenceDate(item);
+    const occurrenceDate = parseDate(calendarDate);
     const frequency = financeFrequencyLabel(item.frequency);
     const status = financeStatusLabel(item.status);
+    const calendarActions = occurrenceDate ? `
+      <button type="button" data-action="google-calendar" data-collection="transactions" data-id="${item.id}" data-date="${escapeHtml(calendarDate)}">Google</button>
+      <button type="button" data-action="ics-calendar" data-collection="transactions" data-id="${item.id}" data-date="${escapeHtml(calendarDate)}">.ics</button>
+    ` : "";
 
     return `
       <article class="item finance-item ${item.type}">
@@ -1097,6 +1102,7 @@ function renderFinance() {
         </div>
         <div class="money ${item.type}">${formatMoney.format(signedAmount)}</div>
         <div class="item-actions">
+          ${calendarActions}
           ${item.status === "pending" ? `<button type="button" data-action="mark-finance-paid" data-id="${item.id}">Pagado</button>` : ""}
           <button type="button" data-action="delete-finance" data-id="${item.id}">Borrar</button>
         </div>
@@ -1129,6 +1135,11 @@ function renderTimelineItem(item) {
 }
 
 function renderScheduleItem(item) {
+  const calendarDate = inputDateValue(item.at);
+  const calendarActions = `
+    <button type="button" data-action="google-calendar" data-collection="${escapeHtml(item.collection)}" data-id="${escapeHtml(item.rawId)}" data-date="${escapeHtml(calendarDate)}">Google</button>
+    <button type="button" data-action="ics-calendar" data-collection="${escapeHtml(item.collection)}" data-id="${escapeHtml(item.rawId)}" data-date="${escapeHtml(calendarDate)}">.ics</button>
+  `;
   const actions = {
     tasks: `<button type="button" data-action="toggle-task" data-id="${item.rawId}">Listo</button>`,
     attentions: `<button type="button" data-action="close-attention" data-id="${item.rawId}">Cerrar</button>`,
@@ -1144,7 +1155,10 @@ function renderScheduleItem(item) {
         <span>${escapeHtml(item.kind)}${item.detail ? ` · ${escapeHtml(item.detail)}` : ""}</span>
         ${item.notes ? `<p>${escapeHtml(item.notes)}</p>` : ""}
       </div>
-      ${actions[item.collection] || ""}
+      <div class="item-actions timeline-actions">
+        ${calendarActions}
+        ${actions[item.collection] || ""}
+      </div>
     </article>
   `;
 }
@@ -1160,6 +1174,206 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function calendarRecord(collection, id, occurrenceDate = "") {
+  if (collection === "tasks") {
+    const task = state.tasks.find((item) => item.id === id);
+    const start = parseDate(task?.due);
+    if (!task || !start) return null;
+    return {
+      id: `task-${task.id}`,
+      title: `Pendiente: ${task.title}`,
+      start,
+      end: addMinutes(start, 30),
+      details: [task.notes, `Prioridad: ${task.priority}`].filter(Boolean).join("\n")
+    };
+  }
+
+  if (collection === "attentions") {
+    const attention = state.attentions.find((item) => item.id === id);
+    const start = parseDate(attention?.followUp);
+    if (!attention || !start) return null;
+    return {
+      id: `seguimiento-${attention.id}`,
+      title: `Seguimiento: ${attention.person} - ${attention.subject}`,
+      start,
+      end: addMinutes(start, 30),
+      details: [attention.notes, `Estado: ${attention.status}`].filter(Boolean).join("\n")
+    };
+  }
+
+  if (collection === "events") {
+    const event = state.events.find((item) => item.id === id);
+    const start = parseDate(event?.start);
+    if (!event || !start) return null;
+    return {
+      id: `evento-${event.id}`,
+      title: event.title,
+      start,
+      end: eventEndDate(event) || addMinutes(start, 60),
+      location: event.place,
+      details: event.notes
+    };
+  }
+
+  if (collection === "transactions") {
+    const item = financialItems().find((entry) => entry.id === id);
+    const start = parseReminderDate(occurrenceDate || financeOccurrenceDate(item));
+    if (!item || !start) return null;
+    const amount = formatMoney.format(Number(item.amount || 0));
+    const titlePrefix = item.type === "income" ? "Ingreso" : item.type === "debt" ? "Pago deuda" : "Pago";
+    return {
+      id: `finanzas-${item.id}-${inputDateValue(start)}`,
+      title: `${titlePrefix}: ${item.description}`,
+      start,
+      end: addMinutes(start, 30),
+      details: [
+        `${financeTypeLabel(item)} por ${amount}`,
+        `Categoría: ${item.category}`,
+        `Frecuencia: ${financeFrequencyLabel(item.frequency)}`,
+        `Estado: ${financeStatusLabel(item.status)}`,
+        item.notes
+      ].filter(Boolean).join("\n")
+    };
+  }
+
+  return null;
+}
+
+function calendarRecordFromReminder(item) {
+  const occurrenceDate = item.collection === "transactions" ? inputDateValue(item.at) : "";
+  return calendarRecord(item.collection, item.rawId, occurrenceDate);
+}
+
+function calendarReminderText() {
+  const leads = activeLeadTimes();
+  if (!leads.length) return "Sin recordatorios configurados en la app.";
+  return `Recordatorios sugeridos: ${leads.map(leadLabel).join(", ")}.`;
+}
+
+function toCalendarDateTime(date) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}T${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}00Z`;
+}
+
+function googleCalendarUrl(record) {
+  const url = new URL("https://calendar.google.com/calendar/render");
+  url.searchParams.set("action", "TEMPLATE");
+  url.searchParams.set("text", record.title);
+  url.searchParams.set("dates", `${toCalendarDateTime(record.start)}/${toCalendarDateTime(record.end)}`);
+  url.searchParams.set("details", [record.details, calendarReminderText()].filter(Boolean).join("\n\n"));
+  if (record.location) url.searchParams.set("location", record.location);
+  return url.toString();
+}
+
+function icsEscape(value) {
+  return String(value || "")
+    .replaceAll("\\", "\\\\")
+    .replaceAll(";", "\\;")
+    .replaceAll(",", "\\,")
+    .replace(/\r?\n/g, "\\n");
+}
+
+function icsTrigger(minutes) {
+  if (minutes === 0) return "PT0M";
+  if (minutes % 1440 === 0) return `-P${minutes / 1440}D`;
+  if (minutes % 60 === 0) return `-PT${minutes / 60}H`;
+  return `-PT${minutes}M`;
+}
+
+function foldIcsLine(line) {
+  if (line.length <= 74) return line;
+  const parts = [];
+  let rest = line;
+  while (rest.length > 74) {
+    parts.push(rest.slice(0, 74));
+    rest = ` ${rest.slice(74)}`;
+  }
+  parts.push(rest);
+  return parts.join("\r\n");
+}
+
+function buildIcs(records) {
+  const now = toCalendarDateTime(new Date());
+  const alarms = activeLeadTimes();
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Asistente de Control//Calendario//ES",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH"
+  ];
+
+  records.forEach((record) => {
+    lines.push(
+      "BEGIN:VEVENT",
+      `UID:${icsEscape(record.id)}@asistente-control`,
+      `DTSTAMP:${now}`,
+      `DTSTART:${toCalendarDateTime(record.start)}`,
+      `DTEND:${toCalendarDateTime(record.end)}`,
+      `SUMMARY:${icsEscape(record.title)}`
+    );
+    if (record.location) lines.push(`LOCATION:${icsEscape(record.location)}`);
+    const description = [record.details, calendarReminderText()].filter(Boolean).join("\n\n");
+    if (description) lines.push(`DESCRIPTION:${icsEscape(description)}`);
+    alarms.forEach((minutes) => {
+      lines.push(
+        "BEGIN:VALARM",
+        "ACTION:DISPLAY",
+        `DESCRIPTION:${icsEscape(record.title)}`,
+        `TRIGGER:${icsTrigger(minutes)}`,
+        "END:VALARM"
+      );
+    });
+    lines.push("END:VEVENT");
+  });
+
+  lines.push("END:VCALENDAR");
+  return `${lines.map(foldIcsLine).join("\r\n")}\r\n`;
+}
+
+function safeFileName(value) {
+  return normalizeText(value).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "calendario";
+}
+
+function downloadCalendarRecords(records, filename) {
+  if (!records.length) {
+    toast("No hay registros con fecha para calendario");
+    return;
+  }
+  const blob = new Blob([buildIcs(records)], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+  toast("Calendario descargado");
+}
+
+function openGoogleCalendar(collection, id, occurrenceDate = "") {
+  const record = calendarRecord(collection, id, occurrenceDate);
+  if (!record) {
+    toast("Ese registro no tiene fecha para calendario");
+    return;
+  }
+  window.open(googleCalendarUrl(record), "_blank", "noopener");
+}
+
+function downloadCalendarItem(collection, id, occurrenceDate = "") {
+  const record = calendarRecord(collection, id, occurrenceDate);
+  if (!record) {
+    toast("Ese registro no tiene fecha para calendario");
+    return;
+  }
+  downloadCalendarRecords([record], `${safeFileName(record.title)}.ics`);
+}
+
+function exportVisibleCalendar() {
+  const selectedRange = $("#scheduleRange").value;
+  const records = agendaItemsForRange(selectedRange).map(calendarRecordFromReminder).filter(Boolean);
+  downloadCalendarRecords(records, `agenda-${selectedRange}-${inputDateValue()}.ics`);
 }
 
 function exportData() {
@@ -1479,6 +1693,7 @@ function bindEvents() {
   $("#planDay").addEventListener("click", () => renderDayPlan(true));
   $("#speakNow").addEventListener("click", () => renderDayPlan(true));
   $("#speakSchedule").addEventListener("click", speakSchedule);
+  $("#exportScheduleCalendar").addEventListener("click", exportVisibleCalendar);
   $("#confirmVoice").addEventListener("click", confirmVoiceAction);
   $("#cancelVoice").addEventListener("click", () => {
     pendingVoiceAction = null;
@@ -1506,6 +1721,9 @@ function bindEvents() {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
     const { action, id } = button.dataset;
+
+    if (action === "google-calendar") openGoogleCalendar(button.dataset.collection, id, button.dataset.date);
+    if (action === "ics-calendar") downloadCalendarItem(button.dataset.collection, id, button.dataset.date);
 
     if (action === "toggle-task") {
       const task = state.tasks.find((item) => item.id === id);
